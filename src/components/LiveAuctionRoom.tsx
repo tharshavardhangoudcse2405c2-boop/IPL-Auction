@@ -59,10 +59,12 @@ export function LiveAuctionRoom({
   const [deskTab, setDeskTab] = useState<DeskTab>('bids');
   const [inspectedTeamId, setInspectedTeamId] = useState<string | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [pendingBidKey, setPendingBidKey] = useState<string | null>(null);
 
   const prevBidIdRef = useRef<string | null>(null);
   const prevOutcomeTsRef = useRef<number | null>(null);
   const lastTickSecRef = useRef<number | null>(null);
+  const pendingTimerRef = useRef<number | null>(null);
 
   const me = state.participants.find((p) => p.clientId === clientId);
   const isHost = Boolean(me?.isHost);
@@ -131,17 +133,30 @@ export function LiveAuctionRoom({
   const nextBid = lot ? getNextValidBid(lot) : 0;
   const currentIncrement = lot && lot.currentBid > 0 ? getBidIncrement(lot.currentBid) : 0;
 
+  // Clear pending bid lock whenever lot bid/leader/phase updates
+  useEffect(() => {
+    setPendingBidKey(null);
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+  }, [lot?.lotNumber, lot?.currentBid, lot?.leadingTeamId, state.phase]);
+
   // Determine which teams this client can actively bid for
   const biddableHumanTeams: Team[] = useMemo(() => {
     if (state.config.mode === 'local') {
-      return state.teams.filter((t) => t.controlType === 'human');
+      return state.teams.filter(
+        (t) => t.controlType === 'human' && (isHost || t.ownerClientId === clientId),
+      );
     }
     if (state.config.mode === 'solo') {
-      return state.teams.filter((t) => t.controlType === 'human');
+      return state.teams.filter((t) => t.controlType === 'human' && t.ownerClientId === clientId);
     }
-    // Online mode: only the franchise owned by this client
-    return state.teams.filter((t) => t.controlType === 'human' && t.ownerClientId === clientId);
-  }, [state.config.mode, state.teams, clientId]);
+    // Online mode: strictly the single franchise claimed by this participant
+    return state.teams.filter(
+      (t) => t.controlType === 'human' && t.ownerClientId === clientId && me?.teamId === t.id,
+    );
+  }, [state.config.mode, state.teams, clientId, isHost, me?.teamId]);
 
   const inspectedTeam =
     state.teams.find((t) => t.id === inspectedTeamId) ??
@@ -149,6 +164,16 @@ export function LiveAuctionRoom({
     state.teams[0];
 
   const handlePlaceBid = (teamId: string, expectedAmount: number) => {
+    if (!lot) return;
+    const key = `${lot.lotNumber}:${teamId}:${expectedAmount}`;
+    setPendingBidKey(key);
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+    }
+    pendingTimerRef.current = window.setTimeout(() => {
+      setPendingBidKey((cur) => (cur === key ? null : cur));
+    }, 900);
+
     onSend({
       type: 'auction:bid',
       teamId,
@@ -380,8 +405,10 @@ export function LiveAuctionRoom({
                 </div>
 
                 {biddableHumanTeams.length === 0 ? (
-                  <div className="rounded-xl border border-white/10 bg-[#090D16] p-4 text-sm text-slate-400">
-                    You are spectating this room. Human franchise owners bid directly from their consoles.
+                  <div className="rounded-xl border border-amber-400/30 bg-[#090D16] p-4 text-sm text-amber-100">
+                    {state.config.mode === 'online'
+                      ? 'You have not claimed a franchise in this room. You must claim a team in the lobby before placing bids.'
+                      : 'No human-controlled franchise is assigned to this session.'}
                   </div>
                 ) : (
                   <div
@@ -398,6 +425,8 @@ export function LiveAuctionRoom({
                       const isLeading = lot.leadingTeamId === team.id;
                       const overseas = getTeamOverseasCount(team);
                       const roles = getTeamRoleCounts(team);
+                      const bidKey = `${lot.lotNumber}:${team.id}:${elig.nextBid}`;
+                      const isSubmitting = pendingBidKey === bidKey;
 
                       return (
                         <div
@@ -429,17 +458,21 @@ export function LiveAuctionRoom({
 
                           <button
                             type="button"
-                            disabled={!elig.canBid}
+                            disabled={!elig.canBid || isSubmitting}
                             onClick={() => handlePlaceBid(team.id, elig.nextBid)}
                             className={`rounded-lg px-4 py-2.5 text-sm font-bold transition-transform active:scale-[0.98] whitespace-nowrap shrink-0 min-h-[44px] ${
-                              elig.canBid
+                              elig.canBid && !isSubmitting
                                 ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 shadow-sm'
                                 : isLeading
                                   ? 'border border-emerald-500/40 bg-emerald-500/20 text-emerald-300 cursor-default'
                                   : 'border border-white/10 bg-white/5 text-slate-400 cursor-not-allowed'
                             }`}
                           >
-                            {elig.canBid ? `Bid ${formatLakhs(elig.nextBid)}` : elig.reason || 'Unavailable'}
+                            {isSubmitting
+                              ? 'Placing...'
+                              : elig.canBid
+                                ? `Bid ${formatLakhs(elig.nextBid)}`
+                                : elig.reason || 'Unavailable'}
                           </button>
                         </div>
                       );

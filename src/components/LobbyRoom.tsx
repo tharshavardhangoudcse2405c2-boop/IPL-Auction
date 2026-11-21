@@ -13,9 +13,16 @@ interface LobbyRoomProps {
 export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
 
   const me = state.participants.find((p) => p.clientId === clientId);
   const isHost = Boolean(me?.isHost);
+  const isOnline = state.config.mode === 'online';
+  const hasUnclaimedHumanSeats = state.teams.some(
+    (t) => t.controlType === 'human' && !t.ownerClientId,
+  );
+  const needsClaimInOnline = isOnline && !me?.teamId;
 
   const copyText = async (text: string, which: 'code' | 'link') => {
     try {
@@ -32,6 +39,15 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
     }
   };
 
+  const commitRename = (teamId: string) => {
+    const trimmed = editingName.trim();
+    if (trimmed) {
+      onSend({ type: 'room:update_team', teamId, name: trimmed });
+    }
+    setEditingTeamId(null);
+    setEditingName('');
+  };
+
   const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${state.roomCode}`;
 
   return (
@@ -40,7 +56,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-2xl border border-white/10 bg-[#111827] p-6">
         <div className="space-y-1.5">
           <div className="text-xs font-medium text-amber-400 uppercase tracking-wider">
-            Pre-Auction Lobby · {state.config.mode === 'online' ? 'Online Multiplayer' : state.config.mode === 'local' ? 'Shared-Screen Local' : 'Solo vs. AI Bots'}
+            Pre-Auction Lobby · {isOnline ? 'Online Multiplayer' : state.config.mode === 'local' ? 'Shared-Screen Local' : 'Solo vs. AI Bots'}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="font-display text-3xl font-extrabold text-white">
@@ -106,22 +122,45 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
       {/* Main Grid: Franchises + Participants & Rules */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 rounded-2xl border border-white/10 bg-[#111827] p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-xl font-bold text-white">
-              Franchise Seats ({state.teams.length})
-            </h2>
-            <span className="text-xs text-slate-400">
-              Unclaimed online seats auto-assign to AI bots when auction starts
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-xl font-bold text-white">
+                Franchise Seats ({state.teams.length})
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {isOnline
+                  ? 'Each online manager claims one franchise. Unclaimed open seats will not bid unless assigned to AI bots.'
+                  : state.config.mode === 'local'
+                    ? 'Shared-screen local auction: all human franchises bid openly on one screen.'
+                    : 'Solo franchise vs. AI-managed rivals.'}
+              </p>
+            </div>
+            {isHost && isOnline && hasUnclaimedHumanSeats && (
+              <button
+                type="button"
+                onClick={() => onSend({ type: 'room:fill_bots' })}
+                className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 whitespace-nowrap"
+              >
+                Fill Open Seats with AI Bots
+              </button>
+            )}
           </div>
+
+          {needsClaimInOnline && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100"
+            >
+              You have not claimed a franchise yet. Click <strong>Claim</strong> on any open human seat below to bid once the auction begins.
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {state.teams.map((team) => {
               const isMine = team.ownerClientId === clientId && team.controlType === 'human';
-              const canClaim =
-                state.config.mode === 'online' &&
-                team.controlType === 'human' &&
-                !team.ownerClientId;
+              const canClaim = isOnline && team.controlType === 'human' && !team.ownerClientId;
+              const canEditName = isHost || isMine;
+              const isEditing = editingTeamId === team.id;
 
               return (
                 <div
@@ -132,22 +171,65 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                       : 'border-white/10 bg-[#090D16]'
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <TeamCrest shortCode={team.shortCode} color={team.color} size="md" />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-white">{team.name}</div>
+                    <div className="min-w-0 flex-1">
+                      {isEditing ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            commitRename(team.id);
+                          }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <input
+                            type="text"
+                            value={editingName}
+                            maxLength={32}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onBlur={() => commitRename(team.id)}
+                            autoFocus
+                            className="w-full rounded border border-amber-400/50 bg-[#111827] px-2 py-1 text-xs font-semibold text-white focus:outline-none"
+                          />
+                        </form>
+                      ) : (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="truncate text-sm font-semibold text-white">{team.name}</span>
+                          {canEditName && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingTeamId(team.id);
+                                setEditingName(team.name);
+                              }}
+                              className="text-[11px] text-slate-400 hover:text-amber-300 shrink-0"
+                            >
+                              Rename
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <div className="text-xs text-slate-400 truncate">
                         {team.controlType === 'bot'
                           ? `AI Manager · ${state.config.botDifficulty}`
                           : team.ownerName
-                            ? `${team.ownerName}${team.isReady ? ' · Ready' : ' · Waiting'}`
+                            ? `${team.ownerName}${isMine ? ' (You)' : ''}${team.isReady ? ' · Ready' : ' · Waiting'}`
                             : 'Open seat'}
                       </div>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    {state.config.mode === 'online' && canClaim && (
+                    {isOnline && isMine && (
+                      <button
+                        type="button"
+                        onClick={() => onSend({ type: 'room:claim_team', teamId: null })}
+                        className="rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 whitespace-nowrap"
+                      >
+                        Release
+                      </button>
+                    )}
+                    {canClaim && (
                       <button
                         type="button"
                         onClick={() => onSend({ type: 'room:claim_team', teamId: team.id })}

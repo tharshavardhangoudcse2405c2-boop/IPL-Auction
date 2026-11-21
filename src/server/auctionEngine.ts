@@ -6,11 +6,13 @@ import {
   buildPlayerQueue,
 } from '../shared/data.ts';
 import {
+  MIN_PLAYER_RESERVE_LAKHS,
   evaluateTeamBidEligibility,
   formatLakhs,
   getBidIncrement,
   getMaxAffordableBid,
   getNextValidBid,
+  getTeamOverseasCount,
   getTeamRoleCounts,
   getTeamTacticalCounts,
   type AuctionConfig,
@@ -27,14 +29,25 @@ import {
 export interface RoomRuntime {
   state: AuctionRoomState;
   sessionTokens: Map<string, string>; // clientId -> sessionToken
-  botLotValuations: Map<string, { maxWilling: number; reason: string }>; // `${lotNumber}:${teamId}`
+  botLotValuations: Map<string, { maxWilling: number; reason: string }>; // `${lotNumber}:${playerId}:${teamId}`
   botReadyAt: Map<string, number>; // teamId -> epoch ms when bot can place next bid
   autoAdvanceAt: number | null; // epoch ms during LOT_RESULT before opening next lot
   lastTickAt: number;
 }
 
 function makeId(prefix: string): string {
-  return `${prefix}-${crypto.randomBytes(4).toString('hex')}`;
+  return `${prefix}-${crypto.randomBytes(6).toString('hex')}`;
+}
+
+export function makeServerClientId(): string {
+  return `cli-${crypto.randomBytes(8).toString('hex')}`;
+}
+
+function timingSafeTokenEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 export function generateRoomCode(): string {
@@ -72,30 +85,70 @@ export function createTeamsFromConfig(
     const isFirst = i === 0;
     const defaultControl: 'human' | 'bot' =
       config.mode === 'solo' ? (isFirst ? 'human' : 'bot') :
-      config.mode === 'local' ? 'human' :
       'human';
 
-    const controlType = custom?.controlType ?? defaultControl;
-    const ownerClientId =
-      config.mode === 'online'
-        ? (isFirst && controlType === 'human' ? hostClientId : null)
-        : config.mode === 'solo'
-          ? (isFirst ? hostClientId : null)
-          : (controlType === 'human' ? hostClientId : null);
+    const controlType: 'human' | 'bot' =
+      custom?.controlType === 'bot' || custom?.controlType === 'human'
+        ? custom.controlType
+        : defaultControl;
+
+    // Ownership assignment:
+    // - online: host claims first human seat (Team 1 if human); all other human seats start unclaimed
+    // - solo: host owns only the single human seat (first human team)
+    // - local: host/operator owns all human-controlled teams on the shared screen
+    let ownerClientId: string | null = null;
+    let ownerName: string | null = null;
+
+    if (controlType === 'bot') {
+      ownerClientId = null;
+      ownerName = 'AI Manager';
+    } else if (config.mode === 'local') {
+      ownerClientId = hostClientId;
+      ownerName = hostName;
+    } else if (config.mode === 'solo') {
+      const alreadyHasHuman = teams.some((t) => t.controlType === 'human' && t.ownerClientId === hostClientId);
+      if (!alreadyHasHuman) {
+        ownerClientId = hostClientId;
+        ownerName = hostName;
+      } else {
+        // Solo mode strictly permits 1 human franchise; extra slots become bots
+        teams.push({
+          id: `team-${i + 1}`,
+          name: custom?.name?.trim() || tpl.name,
+          shortCode: (custom?.shortCode?.trim() || tpl.shortCode).toUpperCase().slice(0, 5),
+          color: custom?.color && /^#[0-9A-Fa-f]{6}$/.test(custom.color) ? custom.color : tpl.color,
+          accentColor: tpl.accentColor,
+          controlType: 'bot',
+          ownerClientId: null,
+          ownerName: 'AI Manager',
+          purse: config.startingPurse,
+          startingPurse: config.startingPurse,
+          squad: [],
+          isReady: true,
+        });
+        continue;
+      }
+    } else if (config.mode === 'online') {
+      const alreadyOwnsOne = teams.some((t) => t.ownerClientId === hostClientId);
+      if (!alreadyOwnsOne) {
+        ownerClientId = hostClientId;
+        ownerName = hostName;
+      }
+    }
 
     teams.push({
       id: `team-${i + 1}`,
-      name: custom?.name?.trim() || tpl.name,
+      name: custom?.name?.trim().slice(0, 32) || tpl.name,
       shortCode: (custom?.shortCode?.trim() || tpl.shortCode).toUpperCase().slice(0, 5),
-      color: custom?.color || tpl.color,
+      color: custom?.color && /^#[0-9A-Fa-f]{6}$/.test(custom.color) ? custom.color : tpl.color,
       accentColor: tpl.accentColor,
       controlType,
       ownerClientId,
-      ownerName: ownerClientId === hostClientId ? hostName : controlType === 'bot' ? 'AI Manager' : null,
+      ownerName,
       purse: config.startingPurse,
       startingPurse: config.startingPurse,
       squad: [],
-      isReady: controlType === 'bot' || isFirst,
+      isReady: controlType === 'bot' || ownerClientId === hostClientId,
     });
   }
 
@@ -104,13 +157,19 @@ export function createTeamsFromConfig(
 
 export function sanitizeConfig(raw: Partial<AuctionConfig>): AuctionConfig {
   const base = { ...DEFAULT_CONFIG, ...raw };
+  const mode = base.mode === 'online' || base.mode === 'solo' || base.mode === 'local' ? base.mode : 'solo';
   const teamCount = Math.max(2, Math.min(12, Math.round(Number(base.teamCount) || 6)));
   const startingPurse = Math.max(4000, Math.min(25000, Math.round(Number(base.startingPurse) || 12000)));
-  const minSquadSize = Math.max(4, Math.min(18, Math.round(Number(base.minSquadSize) || 8)));
+  const maxLegalMinSquad = Math.max(4, Math.floor(startingPurse / MIN_PLAYER_RESERVE_LAKHS));
+  const minSquadSize = Math.max(4, Math.min(18, maxLegalMinSquad, Math.round(Number(base.minSquadSize) || 8)));
   const maxSquadSize = Math.max(minSquadSize, Math.min(25, Math.round(Number(base.maxSquadSize) || 15)));
   const maxOverseas = Math.max(1, Math.min(maxSquadSize, Math.round(Number(base.maxOverseas) || 5)));
   const timerSeconds = Math.max(8, Math.min(45, Math.round(Number(base.timerSeconds) || 15)));
   const antiSnipeSeconds = Math.max(3, Math.min(10, Math.round(Number(base.antiSnipeSeconds) || 5)));
+  const poolPreset =
+    base.poolPreset === 'quick_25' || base.poolPreset === 'standard_40' || base.poolPreset === 'mega_60'
+      ? base.poolPreset
+      : 'standard_40';
   const enabledSets = Array.isArray(base.enabledSets) && base.enabledSets.length > 0
     ? base.enabledSets
     : DEFAULT_CONFIG.enabledSets;
@@ -121,6 +180,8 @@ export function sanitizeConfig(raw: Partial<AuctionConfig>): AuctionConfig {
 
   return {
     ...base,
+    mode,
+    poolPreset,
     botDifficulty: validDiff,
     teamCount,
     startingPurse,
@@ -131,33 +192,35 @@ export function sanitizeConfig(raw: Partial<AuctionConfig>): AuctionConfig {
     antiSnipeSeconds,
     enabledSets,
     roleRequirements: {
-      Batter: Math.max(0, Math.min(8, base.roleRequirements?.Batter ?? 2)),
-      Bowler: Math.max(0, Math.min(8, base.roleRequirements?.Bowler ?? 2)),
-      'All-Rounder': Math.max(0, Math.min(6, base.roleRequirements?.['All-Rounder'] ?? 2)),
-      Wicketkeeper: Math.max(0, Math.min(4, base.roleRequirements?.Wicketkeeper ?? 1)),
+      Batter: Math.max(0, Math.min(8, Math.round(Number(base.roleRequirements?.Batter ?? 2)))),
+      Bowler: Math.max(0, Math.min(8, Math.round(Number(base.roleRequirements?.Bowler ?? 2)))),
+      'All-Rounder': Math.max(0, Math.min(6, Math.round(Number(base.roleRequirements?.['All-Rounder'] ?? 2)))),
+      Wicketkeeper: Math.max(0, Math.min(4, Math.round(Number(base.roleRequirements?.Wicketkeeper ?? 1)))),
     },
   };
 }
 
 export function createRoomRuntime(
   roomCode: string,
-  hostClientId: string,
   hostName: string,
   rawConfig: Partial<AuctionConfig>,
   customTeams?: Partial<Team>[],
-): { runtime: RoomRuntime; sessionToken: string } {
+): { runtime: RoomRuntime; hostClientId: string; sessionToken: string } {
   const config = sanitizeConfig(rawConfig);
   const now = Date.now();
-  const sessionToken = crypto.randomBytes(16).toString('hex');
-  const teams = createTeamsFromConfig(config, hostClientId, hostName, customTeams);
+  const hostClientId = makeServerClientId();
+  const sessionToken = crypto.randomBytes(24).toString('hex');
+  const safeHostName = hostName.trim().slice(0, 32) || 'Auctioneer';
+  const teams = createTeamsFromConfig(config, hostClientId, safeHostName, customTeams);
   const playerQueue = buildPlayerQueue(config.enabledSets, config.poolPreset);
+  const firstOwned = teams.find((t) => t.controlType === 'human' && t.ownerClientId === hostClientId);
 
   const hostParticipant: Participant = {
     clientId: hostClientId,
-    name: hostName.trim() || 'Auctioneer',
+    name: safeHostName,
     isHost: true,
     connected: true,
-    teamId: teams[0]?.id ?? null,
+    teamId: firstOwned?.id ?? null,
     isReady: true,
     joinedAt: now,
   };
@@ -192,54 +255,58 @@ export function createRoomRuntime(
     lastTickAt: now,
   };
 
-  return { runtime, sessionToken };
+  return { runtime, hostClientId, sessionToken };
 }
 
 export function joinRoom(
   runtime: RoomRuntime,
-  clientId: string,
+  incomingClientId: string | undefined,
   clientName: string,
   incomingToken?: string,
 ): { sessionToken: string; participant: Participant; reconnected: boolean } {
   const state = runtime.state;
   const now = Date.now();
-  const existing = state.participants.find((p) => p.clientId === clientId);
-  const storedToken = runtime.sessionTokens.get(clientId);
 
-  if (existing && storedToken && incomingToken && storedToken === incomingToken) {
-    existing.connected = true;
-    if (clientName.trim()) {
-      existing.name = clientName.trim();
+  if (
+    typeof incomingClientId === 'string' &&
+    incomingClientId.length > 0 &&
+    typeof incomingToken === 'string' &&
+    incomingToken.length > 0
+  ) {
+    const existing = state.participants.find((p) => p.clientId === incomingClientId);
+    const storedToken = runtime.sessionTokens.get(incomingClientId);
+    if (existing && storedToken && timingSafeTokenEquals(storedToken, incomingToken)) {
+      existing.connected = true;
+      if (clientName.trim()) {
+        existing.name = clientName.trim().slice(0, 32);
+        // Keep owned team's ownerName in sync
+        for (const t of state.teams) {
+          if (t.ownerClientId === existing.clientId) {
+            t.ownerName = existing.name;
+          }
+        }
+      }
+      pushEvent(state, {
+        type: 'info',
+        message: `${existing.name} reconnected to the room.`,
+      });
+      return { sessionToken: storedToken, participant: existing, reconnected: true };
     }
-    pushEvent(state, {
-      type: 'info',
-      message: `${existing.name} reconnected to the room.`,
-    });
-    return { sessionToken: storedToken, participant: existing, reconnected: true };
   }
 
-  const safeClientId = existing ? makeId('cli') : clientId;
-  const sessionToken = crypto.randomBytes(16).toString('hex');
+  // Always allocate a brand-new server-issued clientId & sessionToken for new/unverified joins
+  const safeClientId = makeServerClientId();
+  const sessionToken = crypto.randomBytes(24).toString('hex');
   runtime.sessionTokens.set(safeClientId, sessionToken);
 
-  const cleanName = clientName.trim() || `Manager ${state.participants.length + 1}`;
-  let assignedTeamId: string | null = null;
-
-  if (state.config.mode === 'online' && state.phase === 'LOBBY') {
-    const openTeam = state.teams.find((t) => t.controlType === 'human' && !t.ownerClientId);
-    if (openTeam) {
-      openTeam.ownerClientId = safeClientId;
-      openTeam.ownerName = cleanName;
-      assignedTeamId = openTeam.id;
-    }
-  }
+  const cleanName = clientName.trim().slice(0, 32) || `Manager ${state.participants.length + 1}`;
 
   const participant: Participant = {
     clientId: safeClientId,
     name: cleanName,
     isHost: false,
     connected: true,
-    teamId: assignedTeamId,
+    teamId: null,
     isReady: false,
     joinedAt: now,
   };
@@ -247,7 +314,7 @@ export function joinRoom(
   state.participants.push(participant);
   pushEvent(state, {
     type: 'info',
-    message: `${cleanName} joined the room${assignedTeamId ? ` and took ${state.teams.find((t) => t.id === assignedTeamId)?.name}` : ''}.`,
+    message: `${cleanName} joined the room.`,
   });
 
   return { sessionToken, participant, reconnected: false };
@@ -255,7 +322,7 @@ export function joinRoom(
 
 export function updateLobbyConfig(runtime: RoomRuntime, clientId: string, partial: Partial<AuctionConfig>): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can modify auction rules.';
   if (state.phase !== 'LOBBY') return 'Rules can only be edited in the lobby.';
 
@@ -279,8 +346,11 @@ export function updateLobbyConfig(runtime: RoomRuntime, clientId: string, partia
       preserved,
     );
     for (const p of state.participants) {
-      const owned = state.teams.find((t) => t.ownerClientId === p.clientId);
+      const owned = state.teams.find((t) => t.controlType === 'human' && t.ownerClientId === p.clientId);
       p.teamId = owned?.id ?? null;
+      if (!p.isHost && !p.teamId) {
+        p.isReady = false;
+      }
     }
   }
 
@@ -299,15 +369,16 @@ export function updateTeamSettings(
   payload: { teamId: string; name?: string; shortCode?: string; color?: string; controlType?: 'human' | 'bot' },
 ): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
-  if (!participant) return 'Not a room participant.';
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
+  if (!participant) return 'Not an active room participant.';
+  if (state.phase !== 'LOBBY') return 'Franchises can only be modified in the lobby.';
 
   const team = state.teams.find((t) => t.id === payload.teamId);
   if (!team) return 'Team not found.';
 
   const isOwner = team.ownerClientId === clientId;
   if (!participant.isHost && !isOwner) {
-    return 'Only the host or team owner can edit this franchise.';
+    return 'Only the host or franchise owner can edit this team.';
   }
 
   if (payload.name !== undefined && payload.name.trim()) {
@@ -320,23 +391,44 @@ export function updateTeamSettings(
     team.color = payload.color;
   }
 
-  if (payload.controlType !== undefined && participant.isHost && state.phase === 'LOBBY') {
+  if (payload.controlType !== undefined && (payload.controlType === 'human' || payload.controlType === 'bot')) {
+    if (!participant.isHost) {
+      return 'Only the host can switch a franchise between Human and AI Bot.';
+    }
     team.controlType = payload.controlType;
     if (payload.controlType === 'bot') {
       if (team.ownerClientId) {
         const owner = state.participants.find((p) => p.clientId === team.ownerClientId);
-        if (owner) owner.teamId = null;
+        if (owner && owner.teamId === team.id) {
+          owner.teamId = null;
+          if (!owner.isHost) owner.isReady = false;
+        }
       }
       team.ownerClientId = null;
       team.ownerName = 'AI Manager';
       team.isReady = true;
     } else {
-      team.ownerName = team.ownerClientId ? team.ownerName : null;
-      if (state.config.mode !== 'online') {
+      if (state.config.mode === 'online') {
+        team.ownerClientId = null;
+        team.ownerName = null;
+        team.isReady = false;
+      } else if (state.config.mode === 'local') {
         const host = state.participants.find((p) => p.isHost);
         team.ownerClientId = host?.clientId ?? clientId;
         team.ownerName = host?.name ?? 'Local Player';
         team.isReady = true;
+      } else if (state.config.mode === 'solo') {
+        const host = state.participants.find((p) => p.isHost);
+        const hostId = host?.clientId ?? clientId;
+        const alreadyHasHuman = state.teams.some((t) => t.id !== team.id && t.controlType === 'human' && t.ownerClientId === hostId);
+        if (alreadyHasHuman) {
+          team.controlType = 'bot';
+          return 'Solo mode permits one human-controlled franchise.';
+        }
+        team.ownerClientId = hostId;
+        team.ownerName = host?.name ?? 'Solo Manager';
+        team.isReady = true;
+        if (host) host.teamId = team.id;
       }
     }
   }
@@ -346,33 +438,42 @@ export function updateTeamSettings(
 
 export function claimTeam(runtime: RoomRuntime, clientId: string, teamId: string | null): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant) return 'Participant not found.';
-  if (state.phase !== 'LOBBY') return 'Teams can only be claimed in the lobby.';
+  if (state.phase !== 'LOBBY') return 'Teams can only be claimed or released in the lobby.';
+  if (state.config.mode !== 'online') {
+    return 'Team claiming is only used in online multiplayer lobbies.';
+  }
 
+  // Release any franchise currently owned by this participant first
   for (const t of state.teams) {
-    if (t.ownerClientId === clientId && state.config.mode === 'online') {
+    if (t.ownerClientId === clientId) {
       t.ownerClientId = null;
       t.ownerName = t.controlType === 'bot' ? 'AI Manager' : null;
       t.isReady = t.controlType === 'bot';
     }
   }
+  participant.teamId = null;
 
   if (!teamId) {
-    participant.teamId = null;
+    if (!participant.isHost) participant.isReady = false;
     return null;
   }
 
   const target = state.teams.find((t) => t.id === teamId);
-  if (!target) return 'Team not found.';
-  if (target.controlType === 'bot' && !participant.isHost) {
+  if (!target) return 'Franchise not found.';
+  if (target.controlType === 'bot') {
     return 'That franchise is assigned to an AI bot.';
   }
   if (target.ownerClientId && target.ownerClientId !== clientId) {
-    return 'Franchise already claimed by another player.';
+    return 'Franchise already claimed by another participant.';
+  }
+  // Extra defensive check ensuring no other participant points to target.id
+  const duplicateHolder = state.participants.find((p) => p.clientId !== clientId && p.teamId === target.id);
+  if (duplicateHolder) {
+    return 'Franchise already claimed by another participant.';
   }
 
-  target.controlType = 'human';
   target.ownerClientId = clientId;
   target.ownerName = participant.name;
   target.isReady = participant.isReady || participant.isHost;
@@ -380,9 +481,34 @@ export function claimTeam(runtime: RoomRuntime, clientId: string, teamId: string
   return null;
 }
 
+export function fillOpenSeatsWithBots(runtime: RoomRuntime, clientId: string): string | null {
+  const state = runtime.state;
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
+  if (!participant?.isHost) return 'Only the host can assign AI bots to open seats.';
+  if (state.phase !== 'LOBBY') return 'Can only assign AI bots in the lobby.';
+
+  let converted = 0;
+  for (const t of state.teams) {
+    if (t.controlType === 'human' && !t.ownerClientId) {
+      t.controlType = 'bot';
+      t.ownerName = 'AI Manager';
+      t.isReady = true;
+      converted += 1;
+    }
+  }
+
+  if (converted > 0) {
+    pushEvent(state, {
+      type: 'system',
+      message: `Host assigned AI Managers to ${converted} open franchise ${converted === 1 ? 'seat' : 'seats'}.`,
+    });
+  }
+  return null;
+}
+
 export function toggleParticipantReady(runtime: RoomRuntime, clientId: string, ready: boolean): void {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant) return;
   participant.isReady = ready;
   for (const t of state.teams) {
@@ -394,19 +520,16 @@ export function toggleParticipantReady(runtime: RoomRuntime, clientId: string, r
 
 export function startAuction(runtime: RoomRuntime, clientId: string): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can start the auction.';
   if (state.phase !== 'LOBBY') return 'Auction has already started.';
   if (state.playerQueue.length === 0) return 'Player pool is empty. Enable at least one player set.';
 
-  if (state.config.mode === 'online') {
-    for (const t of state.teams) {
-      if (t.controlType === 'human' && !t.ownerClientId) {
-        t.controlType = 'bot';
-        t.ownerName = 'AI Manager';
-        t.isReady = true;
-      }
-    }
+  const activeBidders = state.teams.filter(
+    (t) => t.controlType === 'bot' || (t.controlType === 'human' && Boolean(t.ownerClientId)),
+  );
+  if (activeBidders.length === 0) {
+    return 'At least one claimed human team or AI bot is required to start the auction.';
   }
 
   pushEvent(state, {
@@ -418,12 +541,15 @@ export function startAuction(runtime: RoomRuntime, clientId: string): string | n
   return null;
 }
 
-function canAnyTeamAffordAnyRemaining(state: AuctionRoomState): boolean {
+function canAnyEligibleTeamAffordAnyRemaining(state: AuctionRoomState): boolean {
   const minNextCost = Math.min(
     ...state.playerQueue.map((p) => p.basePrice),
     ...(state.currentLot ? [getNextValidBid(state.currentLot)] : [Infinity]),
   );
   for (const team of state.teams) {
+    // Only count teams that can actually participate (bot or owned human team)
+    const canParticipate = team.controlType === 'bot' || Boolean(team.ownerClientId);
+    if (!canParticipate) continue;
     if (team.squad.length < state.config.maxSquadSize) {
       const maxAff = getMaxAffordableBid(team, state.config);
       if (maxAff >= minNextCost) return true;
@@ -437,14 +563,20 @@ export function openNextLot(runtime: RoomRuntime): void {
   runtime.autoAdvanceAt = null;
   runtime.botReadyAt.clear();
 
-  const allTeamsFull = state.teams.every((t) => t.squad.length >= state.config.maxSquadSize);
-  if (state.playerQueue.length === 0 || allTeamsFull || !canAnyTeamAffordAnyRemaining(state)) {
+  const participatingTeams = state.teams.filter(
+    (t) => t.controlType === 'bot' || Boolean(t.ownerClientId),
+  );
+  const allTeamsFull =
+    participatingTeams.length > 0 &&
+    participatingTeams.every((t) => t.squad.length >= state.config.maxSquadSize);
+
+  if (state.playerQueue.length === 0 || allTeamsFull || !canAnyEligibleTeamAffordAnyRemaining(state)) {
     state.phase = 'COMPLETED';
     state.currentLot = null;
     pushEvent(state, {
       type: 'system',
       message: allTeamsFull
-        ? 'All franchises have reached maximum squad capacity. Auction concluded!'
+        ? 'All active franchises have reached maximum squad capacity. Auction concluded!'
         : 'Player pool complete. Final franchise squads locked!',
     });
     return;
@@ -479,11 +611,6 @@ export function openNextLot(runtime: RoomRuntime): void {
   scheduleBotsForCurrentLot(runtime, now);
 }
 
-/**
- * Evaluates tactical composition need for a specific player on a bot's current squad.
- * Considers both broad role minimums (Batter/Bowler/All-Rounder/Wicketkeeper)
- * and specialized tactical roles (Opening Batter, Death Bowler, Spinner, Finisher, Keeper).
- */
 function evaluateTacticalNeed(
   team: Team,
   player: Player,
@@ -497,7 +624,6 @@ function evaluateTacticalNeed(
   let reason = 'Squad Balance';
   let isUrgentGap = false;
 
-  // Check tactical role scarcity first
   switch (player.tacticalRole) {
     case 'Wicketkeeper-Batter':
       if (tactical.keepers === 0) {
@@ -569,7 +695,6 @@ function evaluateTacticalNeed(
       break;
   }
 
-  // Also factor broad role minimums from host rules
   if (broadCounts[player.role] < broadReq && multiplier < 1.25) {
     multiplier = Math.max(multiplier, 1.24);
     reason = `Min ${player.role} Quota`;
@@ -585,7 +710,7 @@ function computeBotValuation(
   team: Team,
   player: Player,
 ): { maxWilling: number; reason: string } {
-  const key = `${runtime.state.currentLot?.lotNumber ?? 0}:${team.id}`;
+  const key = `${runtime.state.currentLot?.lotNumber ?? 0}:${player.id}:${team.id}`;
   const cached = runtime.botLotValuations.get(key);
   if (cached !== undefined) return cached;
 
@@ -597,30 +722,26 @@ function computeBotValuation(
     return zero;
   }
 
-  // Fair market value curve from scouting rating (65..97)
   const normalized = Math.max(0, (player.rating - 68) / 29);
-  const fairMarketValue = 40 + Math.pow(normalized, 2.3) * 1550; // ~₹40L up to ~₹16 Cr
+  const fairMarketValue = 40 + Math.pow(normalized, 2.3) * 1550;
 
   const slotsRemainingToMin = Math.max(1, config.minSquadSize - team.squad.length);
   const avgPursePerSlot = maxAffordable / slotsRemainingToMin;
-  const overseasUsed = team.squad.filter((s) => s.player.isOverseas).length;
+  const overseasUsed = getTeamOverseasCount(team);
   const overseasRemaining = Math.max(0, config.maxOverseas - overseasUsed);
 
   let valuation = fairMarketValue;
   let reason = 'Market Value';
 
   if (config.botDifficulty === 'easy') {
-    // EASY: Basic bidding based primarily on player rating & base price; ignores tactical composition gaps
-    const jitter = 0.65 + crypto.randomInt(0, 22) / 100; // 0.65 .. 0.86
+    const jitter = 0.65 + crypto.randomInt(0, 22) / 100;
     valuation = fairMarketValue * jitter;
-    // Cap at 28% of remaining spendable purse so easy bots don't bid deeply
     valuation = Math.min(valuation, maxAffordable * 0.28);
     if (crypto.randomInt(0, 100) < 20) {
       valuation = Math.min(valuation, player.basePrice * 1.4);
     }
     reason = 'Basic Value';
   } else if (config.botDifficulty === 'medium') {
-    // MEDIUM: Strategic role filling + balanced purse pacing across remaining slots
     const need = evaluateTacticalNeed(team, player, config);
     valuation *= need.multiplier;
     reason = need.reason;
@@ -629,16 +750,14 @@ function computeBotValuation(
       valuation *= 0.64;
     }
 
-    // Prudent budget pacing
     const shareCap =
       slotsRemainingToMin > 2
         ? Math.max(avgPursePerSlot * 1.85, maxAffordable * (player.rating >= 92 ? 0.42 : 0.3))
         : maxAffordable;
 
-    const jitter = 0.9 + crypto.randomInt(0, 20) / 100; // 0.90 .. 1.09
+    const jitter = 0.9 + crypto.randomInt(0, 20) / 100;
     valuation = Math.min(valuation * jitter, shareCap);
   } else {
-    // HARD: Aggressive bidding on high-rating stars & urgent tactical target roles
     const need = evaluateTacticalNeed(team, player, config);
     const isTargetStar = player.rating >= 90 || need.isUrgentGap;
     valuation *= need.multiplier * (isTargetStar ? 1.22 : 1.04);
@@ -651,12 +770,10 @@ function computeBotValuation(
       reason = need.reason;
     }
 
-    // Hard bots save overseas slots specifically for elite overseas match-winners
     if (player.isOverseas && overseasRemaining <= 1 && player.rating < 88) {
       valuation *= 0.55;
     }
 
-    // Indian core star premium (does not consume precious overseas slots)
     if (!player.isOverseas && player.rating >= 88) {
       valuation *= 1.12;
     }
@@ -666,7 +783,7 @@ function computeBotValuation(
         ? Math.max(avgPursePerSlot * 2.4, maxAffordable * (isTargetStar ? 0.54 : 0.36))
         : maxAffordable;
 
-    const jitter = 0.96 + crypto.randomInt(0, 22) / 100; // 0.96 .. 1.17
+    const jitter = 0.96 + crypto.randomInt(0, 22) / 100;
     valuation = Math.min(valuation * jitter, shareCap);
   }
 
@@ -705,23 +822,60 @@ export function handlePlaceBid(
 ): { ok: boolean; reason?: string; amount?: number; lotEndsAt?: number } {
   const state = runtime.state;
   const lot = state.currentLot;
+  const now = Date.now();
+
   if (state.phase !== 'LIVE' || !lot) {
     return { ok: false, reason: 'Bidding is not currently open.' };
   }
 
-  const team = state.teams.find((t) => t.id === teamId);
-  if (!team) return { ok: false, reason: 'Franchise not found.' };
+  // Strictly reject late bids that arrive after the countdown expired
+  if (now >= lot.lotEndsAt) {
+    return { ok: false, reason: 'Bidding window has expired for this lot.' };
+  }
 
-  if (!isBot) {
+  if (typeof teamId !== 'string' || !teamId.trim()) {
+    return { ok: false, reason: 'Invalid franchise specified.' };
+  }
+
+  if (!Number.isInteger(expectedAmount) || expectedAmount <= 0) {
+    return { ok: false, reason: 'Invalid bid amount.' };
+  }
+
+  const team = state.teams.find((t) => t.id === teamId);
+  if (!team) {
+    return { ok: false, reason: 'Franchise not found in this room.' };
+  }
+
+  if (isBot) {
+    if (team.controlType !== 'bot') {
+      return { ok: false, reason: 'Only bot-controlled teams may place AI bids.' };
+    }
+  } else {
+    const participant = state.participants.find((p) => p.clientId === actorClientId);
+    if (!participant || !participant.connected) {
+      return { ok: false, reason: 'You are not an active participant in this room.' };
+    }
+
     if (team.controlType !== 'human') {
-      return { ok: false, reason: 'That franchise is managed by an AI bot.' };
+      return { ok: false, reason: 'That franchise is controlled by an AI bot.' };
     }
-    if (state.config.mode === 'online' && team.ownerClientId !== actorClientId) {
-      return { ok: false, reason: 'You can only bid for your assigned franchise.' };
-    }
-    const isParticipant = state.participants.some((p) => p.clientId === actorClientId);
-    if (!isParticipant) {
-      return { ok: false, reason: 'Not a recognized participant in this room.' };
+
+    if (state.config.mode === 'online') {
+      if (!team.ownerClientId) {
+        return { ok: false, reason: 'That franchise is unclaimed. Claim a franchise in the lobby before bidding.' };
+      }
+      if (team.ownerClientId !== participant.clientId || participant.teamId !== team.id) {
+        return { ok: false, reason: 'In online mode you can only place bids for your own claimed franchise.' };
+      }
+    } else if (state.config.mode === 'solo') {
+      if (team.ownerClientId !== participant.clientId) {
+        return { ok: false, reason: 'You can only place bids for your own franchise.' };
+      }
+    } else if (state.config.mode === 'local') {
+      // Shared-screen local mode: host/local operator controls human-assigned franchises
+      if (!participant.isHost && team.ownerClientId !== participant.clientId) {
+        return { ok: false, reason: 'Only the local room operator can place bids for shared-screen franchises.' };
+      }
     }
   }
 
@@ -738,7 +892,6 @@ export function handlePlaceBid(
     return { ok: false, reason: eligibility.reason || 'Team cannot bid.' };
   }
 
-  const now = Date.now();
   lot.currentBid = requiredBid;
   lot.leadingTeamId = team.id;
 
@@ -783,18 +936,29 @@ export function handlePlaceBid(
 export function finalizeCurrentLot(runtime: RoomRuntime, forceUnsold = false): void {
   const state = runtime.state;
   const lot = state.currentLot;
-  if (!lot) return;
+  if (!lot || (state.phase !== 'LIVE' && state.phase !== 'PAUSED')) return;
+
+  // Clear currentLot atomically first so double-finalization is impossible
+  state.currentLot = null;
 
   const now = Date.now();
-  const winner = !forceUnsold && lot.leadingTeamId
+  const candidateWinner = !forceUnsold && lot.leadingTeamId
     ? state.teams.find((t) => t.id === lot.leadingTeamId) ?? null
     : null;
 
+  const canAward =
+    candidateWinner !== null &&
+    lot.currentBid > 0 &&
+    candidateWinner.purse >= lot.currentBid &&
+    candidateWinner.squad.length < state.config.maxSquadSize &&
+    !candidateWinner.squad.some((s) => s.player.id === lot.player.id) &&
+    (!lot.player.isOverseas || getTeamOverseasCount(candidateWinner) < state.config.maxOverseas);
+
   let outcome: LotOutcome;
 
-  if (winner && lot.currentBid > 0) {
-    winner.purse -= lot.currentBid;
-    winner.squad.push({
+  if (canAward && candidateWinner) {
+    candidateWinner.purse -= lot.currentBid;
+    candidateWinner.squad.push({
       player: lot.player,
       soldPrice: lot.currentBid,
       soldAt: now,
@@ -804,18 +968,18 @@ export function finalizeCurrentLot(runtime: RoomRuntime, forceUnsold = false): v
       player: lot.player,
       status: 'SOLD',
       soldPrice: lot.currentBid,
-      winningTeamId: winner.id,
-      winningTeamName: winner.name,
-      winningTeamColor: winner.color,
-      winningTeamShortCode: winner.shortCode,
+      winningTeamId: candidateWinner.id,
+      winningTeamName: candidateWinner.name,
+      winningTeamColor: candidateWinner.color,
+      winningTeamShortCode: candidateWinner.shortCode,
       timestamp: now,
     };
 
     state.soldHistory.unshift(outcome);
     pushEvent(state, {
       type: 'sold',
-      message: `SOLD! ${lot.player.name} goes to ${winner.name} for ${formatLakhs(lot.currentBid)}. Purse left: ${formatLakhs(winner.purse)}.`,
-      teamColor: winner.color,
+      message: `SOLD! ${lot.player.name} goes to ${candidateWinner.name} for ${formatLakhs(lot.currentBid)}. Purse left: ${formatLakhs(candidateWinner.purse)}.`,
+      teamColor: candidateWinner.color,
     });
   } else {
     outcome = {
@@ -829,7 +993,9 @@ export function finalizeCurrentLot(runtime: RoomRuntime, forceUnsold = false): v
       timestamp: now,
     };
 
-    state.unsoldPool.push(lot.player);
+    if (!state.unsoldPool.some((p) => p.id === lot.player.id)) {
+      state.unsoldPool.push(lot.player);
+    }
     pushEvent(state, {
       type: 'unsold',
       message: `UNSOLD: ${lot.player.name} (${formatLakhs(lot.player.basePrice)} base) added to the Unsold Pool.`,
@@ -837,14 +1003,13 @@ export function finalizeCurrentLot(runtime: RoomRuntime, forceUnsold = false): v
   }
 
   state.lastOutcome = outcome;
-  state.currentLot = null;
   state.phase = 'LOT_RESULT';
   runtime.autoAdvanceAt = now + 3500;
 }
 
 export function pauseAuction(runtime: RoomRuntime, clientId: string): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can pause the auction.';
   if (state.phase !== 'LIVE' || !state.currentLot) return 'Auction is not live.';
 
@@ -857,7 +1022,7 @@ export function pauseAuction(runtime: RoomRuntime, clientId: string): string | n
 
 export function resumeAuction(runtime: RoomRuntime, clientId: string): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can resume the auction.';
   if (state.phase !== 'PAUSED' || !state.currentLot) return 'Auction is not paused.';
 
@@ -873,9 +1038,11 @@ export function resumeAuction(runtime: RoomRuntime, clientId: string): string | 
 
 export function extendTimer(runtime: RoomRuntime, clientId: string, extraSeconds: number): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can extend the timer.';
-  if (!state.currentLot) return 'No active lot.';
+  if (!state.currentLot || (state.phase !== 'LIVE' && state.phase !== 'PAUSED')) {
+    return 'No active lot to extend.';
+  }
 
   const addSec = Math.max(1, Math.min(30, Math.round(extraSeconds)));
   const addMs = addSec * 1000;
@@ -890,9 +1057,12 @@ export function extendTimer(runtime: RoomRuntime, clientId: string, extraSeconds
 
 export function undoLastBid(runtime: RoomRuntime, clientId: string): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can undo bids.';
-  if (!state.currentLot || state.currentLot.bidHistory.length === 0) {
+  if (!state.currentLot || (state.phase !== 'LIVE' && state.phase !== 'PAUSED')) {
+    return 'No active lot.';
+  }
+  if (state.currentLot.bidHistory.length === 0) {
     return 'No bids to undo on the current lot.';
   }
 
@@ -906,6 +1076,7 @@ export function undoLastBid(runtime: RoomRuntime, clientId: string): string | nu
   const now = Date.now();
   if (state.phase === 'LIVE') {
     lot.lotEndsAt = Math.max(lot.lotEndsAt, now + 6000);
+    scheduleBotsForCurrentLot(runtime, now);
   } else if (state.phase === 'PAUSED' && lot.remainingMsWhenPaused !== null) {
     lot.remainingMsWhenPaused = Math.max(lot.remainingMsWhenPaused, 6000);
   }
@@ -919,14 +1090,17 @@ export function undoLastBid(runtime: RoomRuntime, clientId: string): string | nu
 
 export function reauctionPlayer(runtime: RoomRuntime, clientId: string, playerId: string): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can re-auction unsold players.';
+  if (typeof playerId !== 'string' || !playerId) return 'Invalid player.';
 
   const idx = state.unsoldPool.findIndex((p) => p.id === playerId);
   if (idx === -1) return 'Player not found in the unsold pool.';
 
   const [player] = state.unsoldPool.splice(idx, 1);
-  state.playerQueue.unshift(player);
+  if (!state.playerQueue.some((p) => p.id === player.id) && !state.teams.some((t) => t.squad.some((s) => s.player.id === player.id))) {
+    state.playerQueue.unshift(player);
+  }
 
   pushEvent(state, {
     type: 'reauction',
@@ -941,7 +1115,7 @@ export function reauctionPlayer(runtime: RoomRuntime, clientId: string, playerId
 
 export function rematchRoom(runtime: RoomRuntime, clientId: string, keepSettings: boolean): string | null {
   const state = runtime.state;
-  const participant = state.participants.find((p) => p.clientId === clientId);
+  const participant = state.participants.find((p) => p.clientId === clientId && p.connected);
   if (!participant?.isHost) return 'Only the host can start a rematch.';
 
   runtime.autoAdvanceAt = null;
@@ -952,7 +1126,10 @@ export function rematchRoom(runtime: RoomRuntime, clientId: string, keepSettings
     team.purse = state.config.startingPurse;
     team.startingPurse = state.config.startingPurse;
     team.squad = [];
-    team.isReady = team.controlType === 'bot' || team.ownerClientId === clientId;
+    const owner = team.ownerClientId
+      ? state.participants.find((p) => p.clientId === team.ownerClientId)
+      : null;
+    team.isReady = team.controlType === 'bot' || Boolean(owner?.isReady || owner?.isHost);
   }
 
   state.playerQueue = buildPlayerQueue(state.config.enabledSets, state.config.poolPreset);

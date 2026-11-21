@@ -284,8 +284,9 @@ export function useAuctionSocket() {
 
   const createRoom = useCallback(
     (clientName: string, config: AuctionConfig, customTeams?: Partial<Team>[]) => {
-      const cid = clientId || makeClientId();
+      const cid = makeClientId();
       setClientId(cid);
+      setRoomState(null);
       activeSessionRef.current = null;
       saveSession(null);
       connectSocket({
@@ -296,7 +297,7 @@ export function useAuctionSocket() {
         customTeams,
       });
     },
-    [clientId, connectSocket],
+    [connectSocket],
   );
 
   const joinRoomByCode = useCallback(
@@ -308,7 +309,12 @@ export function useAuctionSocket() {
       }
       const saved = activeSessionRef.current;
       const matchingSaved = saved && saved.roomCode === code ? saved : null;
-      const cid = matchingSaved?.clientId || clientId || makeClientId();
+      if (!matchingSaved) {
+        activeSessionRef.current = null;
+        saveSession(null);
+        setRoomState(null);
+      }
+      const cid = matchingSaved?.clientId || makeClientId();
       setClientId(cid);
       connectSocket({
         type: 'room:join',
@@ -318,7 +324,7 @@ export function useAuctionSocket() {
         sessionToken: matchingSaved?.sessionToken,
       });
     },
-    [clientId, connectSocket, pushToast],
+    [connectSocket, pushToast],
   );
 
   const leaveRoom = useCallback(() => {

@@ -327,6 +327,7 @@ export type ClientMessage =
   | { type: 'room:update_config'; config: Partial<AuctionConfig> }
   | { type: 'room:update_team'; teamId: string; name?: string; shortCode?: string; color?: string; controlType?: 'human' | 'bot' }
   | { type: 'room:claim_team'; teamId: string | null }
+  | { type: 'room:fill_bots' }
   | { type: 'room:toggle_ready'; ready: boolean }
   | { type: 'auction:start' }
   | { type: 'auction:bid'; teamId: string; expectedAmount: number }

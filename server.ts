@@ -8,6 +8,7 @@ import {
   claimTeam,
   createRoomRuntime,
   extendTimer,
+  fillOpenSeatsWithBots,
   finalizeCurrentLot,
   generateRoomCode,
   getFullPlayerPoolSummary,
@@ -119,19 +120,23 @@ async function resolvePlayerPhoto(playerId: string): Promise<CachedPhoto | null>
     }
   }
 
-  // Safe local bundled fallback portrait inside src/assets/images
-  try {
-    const imagesDir = path.resolve(__dirname, 'src/assets/images');
-    const filename = LOCAL_FALLBACK_PORTRAITS[player.role] || 'player_portrait_batter_1795289107133.jpg';
-    const resolved = path.resolve(imagesDir, filename);
-    if (resolved.startsWith(imagesDir + path.sep)) {
-      const buffer = await fs.readFile(resolved);
-      const entry = { buffer, contentType: 'image/jpeg' };
-      photoCache.set(playerId, entry);
-      return entry;
+  const filename = LOCAL_FALLBACK_PORTRAITS[player.role] || 'player_portrait_batter_1795289107133.jpg';
+  const candidateDirs = [
+    path.resolve(__dirname, 'src/assets/images'),
+    path.resolve(__dirname, 'dist/src/assets/images'),
+  ];
+  for (const imagesDir of candidateDirs) {
+    try {
+      const resolved = path.resolve(imagesDir, filename);
+      if (resolved.startsWith(imagesDir + path.sep)) {
+        const buffer = await fs.readFile(resolved);
+        const entry = { buffer, contentType: 'image/jpeg' };
+        photoCache.set(playerId, entry);
+        return entry;
+      }
+    } catch {
+      // Try next directory
     }
-  } catch {
-    return null;
   }
   return null;
 }
@@ -158,6 +163,29 @@ function broadcastRoomState(roomCode: string): void {
   }
 }
 
+function detachSocketFromRoom(meta: SocketMeta): void {
+  const prevCode = meta.roomCode;
+  const prevClientId = meta.clientId;
+  meta.roomCode = null;
+  meta.clientId = null;
+
+  if (prevCode && prevClientId) {
+    const runtime = rooms.get(prevCode);
+    if (runtime) {
+      const participant = runtime.state.participants.find((p) => p.clientId === prevClientId);
+      if (participant) {
+        const hasAnother = Array.from(socketMetas.values()).some(
+          (m) => m.roomCode === prevCode && m.clientId === prevClientId,
+        );
+        if (!hasAnother) {
+          participant.connected = false;
+          broadcastRoomState(prevCode);
+        }
+      }
+    }
+  }
+}
+
 function allocateUniqueRoomCode(): string {
   for (let i = 0; i < 20; i++) {
     const code = generateRoomCode();
@@ -168,6 +196,7 @@ function allocateUniqueRoomCode(): string {
 
 async function startServer(): Promise<void> {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -196,7 +225,6 @@ async function startServer(): Promise<void> {
     });
   });
 
-  // Safe same-origin cricketer portrait proxy (strictly allowlisted by player ID)
   app.get('/api/player-photo/:id', async (req, res) => {
     const playerId = String(req.params.id || '').trim();
     const photo = await resolvePlayerPhoto(playerId);
@@ -220,13 +248,17 @@ async function startServer(): Promise<void> {
       let msg: ClientMessage;
       try {
         const text = typeof rawData === 'string' ? rawData : rawData.toString('utf8');
+        if (text.length > 65536) {
+          sendToSocket(ws, { type: 'room:error', message: 'Message exceeds maximum allowed size.' });
+          return;
+        }
         msg = JSON.parse(text) as ClientMessage;
       } catch {
         sendToSocket(ws, { type: 'room:error', message: 'Malformed request payload.' });
         return;
       }
 
-      if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') {
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string') {
         sendToSocket(ws, { type: 'room:error', message: 'Invalid message format.' });
         return;
       }
@@ -235,32 +267,33 @@ async function startServer(): Promise<void> {
         sendToSocket(ws, {
           type: 'pong',
           serverTime: Date.now(),
-          clientSentAt: msg.clientSentAt,
+          clientSentAt: typeof msg.clientSentAt === 'number' && Number.isFinite(msg.clientSentAt) ? msg.clientSentAt : undefined,
         });
         return;
       }
 
       if (msg.type === 'room:create') {
+        detachSocketFromRoom(meta);
         const code = allocateUniqueRoomCode();
-        const clientId = String(msg.clientId || `cli-${Date.now()}`).slice(0, 64);
-        const clientName = String(msg.clientName || 'Auctioneer').slice(0, 32);
+        const clientName = typeof msg.clientName === 'string' ? msg.clientName.slice(0, 32) : 'Auctioneer';
+        const configObj = msg.config && typeof msg.config === 'object' ? msg.config : {};
+        const customTeams = Array.isArray(msg.customTeams) ? msg.customTeams.slice(0, 12) : undefined;
 
-        const { runtime, sessionToken } = createRoomRuntime(
+        const { runtime, hostClientId, sessionToken } = createRoomRuntime(
           code,
-          clientId,
           clientName,
-          msg.config || {},
-          msg.customTeams,
+          configObj,
+          customTeams,
         );
         rooms.set(code, runtime);
 
         meta.roomCode = code;
-        meta.clientId = clientId;
+        meta.clientId = hostClientId;
 
         sendToSocket(ws, {
           type: 'room:joined',
           roomCode: code,
-          clientId,
+          clientId: hostClientId,
           sessionToken,
           state: runtime.state,
         });
@@ -268,7 +301,16 @@ async function startServer(): Promise<void> {
       }
 
       if (msg.type === 'room:join') {
-        const code = String(msg.roomCode || '').trim().toUpperCase();
+        const code = typeof msg.roomCode === 'string' ? msg.roomCode.trim().toUpperCase() : '';
+        if (!/^[A-Z0-9]{4,10}$/.test(code)) {
+          sendToSocket(ws, {
+            type: 'room:error',
+            code: 'ROOM_NOT_FOUND',
+            message: 'Enter a valid room code.',
+          });
+          return;
+        }
+
         const runtime = rooms.get(code);
         if (!runtime) {
           sendToSocket(ws, {
@@ -279,9 +321,13 @@ async function startServer(): Promise<void> {
           return;
         }
 
-        const clientId = String(msg.clientId || `cli-${Date.now()}`).slice(0, 64);
-        const clientName = String(msg.clientName || 'Manager').slice(0, 32);
-        const { sessionToken, participant } = joinRoom(runtime, clientId, clientName, msg.sessionToken);
+        detachSocketFromRoom(meta);
+
+        const clientName = typeof msg.clientName === 'string' ? msg.clientName.slice(0, 32) : 'Manager';
+        const incomingClientId = typeof msg.clientId === 'string' ? msg.clientId.slice(0, 64) : undefined;
+        const incomingToken = typeof msg.sessionToken === 'string' ? msg.sessionToken.slice(0, 128) : undefined;
+
+        const { sessionToken, participant } = joinRoom(runtime, incomingClientId, clientName, incomingToken);
 
         meta.roomCode = code;
         meta.clientId = participant.clientId;
@@ -297,6 +343,7 @@ async function startServer(): Promise<void> {
         return;
       }
 
+      // All remaining actions strictly derive identity & room from server-side SocketMeta
       if (!meta.roomCode || !meta.clientId) {
         sendToSocket(ws, { type: 'room:error', message: 'You are not connected to an active room.' });
         return;
@@ -304,6 +351,8 @@ async function startServer(): Promise<void> {
 
       const runtime = rooms.get(meta.roomCode);
       if (!runtime) {
+        meta.roomCode = null;
+        meta.clientId = null;
         sendToSocket(ws, { type: 'room:error', code: 'ROOM_EXPIRED', message: 'Room no longer exists.' });
         return;
       }
@@ -313,19 +362,44 @@ async function startServer(): Promise<void> {
 
       switch (msg.type) {
         case 'room:update_config': {
-          const err = updateLobbyConfig(runtime, clientId, msg.config || {});
+          const err = updateLobbyConfig(
+            runtime,
+            clientId,
+            msg.config && typeof msg.config === 'object' ? msg.config : {},
+          );
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
           else broadcastRoomState(roomCode);
           break;
         }
         case 'room:update_team': {
-          const err = updateTeamSettings(runtime, clientId, msg);
+          if (typeof msg.teamId !== 'string' || !msg.teamId) {
+            sendToSocket(ws, { type: 'room:error', message: 'Invalid team ID.' });
+            break;
+          }
+          const err = updateTeamSettings(runtime, clientId, {
+            teamId: msg.teamId,
+            name: typeof msg.name === 'string' ? msg.name : undefined,
+            shortCode: typeof msg.shortCode === 'string' ? msg.shortCode : undefined,
+            color: typeof msg.color === 'string' ? msg.color : undefined,
+            controlType: msg.controlType === 'human' || msg.controlType === 'bot' ? msg.controlType : undefined,
+          });
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
           else broadcastRoomState(roomCode);
           break;
         }
         case 'room:claim_team': {
-          const err = claimTeam(runtime, clientId, msg.teamId ?? null);
+          const targetTeamId = msg.teamId === null ? null : typeof msg.teamId === 'string' ? msg.teamId : null;
+          if (msg.teamId !== null && typeof msg.teamId !== 'string') {
+            sendToSocket(ws, { type: 'room:error', message: 'Invalid franchise selection.' });
+            break;
+          }
+          const err = claimTeam(runtime, clientId, targetTeamId);
+          if (err) sendToSocket(ws, { type: 'room:error', message: err });
+          else broadcastRoomState(roomCode);
+          break;
+        }
+        case 'room:fill_bots': {
+          const err = fillOpenSeatsWithBots(runtime, clientId);
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
           else broadcastRoomState(roomCode);
           break;
@@ -342,18 +416,23 @@ async function startServer(): Promise<void> {
           break;
         }
         case 'auction:bid': {
-          const result = handlePlaceBid(runtime, msg.teamId, Number(msg.expectedAmount), clientId, false);
+          const teamId = typeof msg.teamId === 'string' ? msg.teamId : '';
+          const expectedAmount = typeof msg.expectedAmount === 'number' && Number.isFinite(msg.expectedAmount)
+            ? msg.expectedAmount
+            : -1;
+
+          const result = handlePlaceBid(runtime, teamId, expectedAmount, clientId, false);
           if (!result.ok) {
             sendToSocket(ws, {
               type: 'bid:rejected',
-              teamId: msg.teamId,
+              teamId,
               reason: result.reason || 'Bid rejected.',
             });
             sendToSocket(ws, { type: 'room:state', state: runtime.state });
           } else {
             sendToSocket(ws, {
               type: 'bid:accepted',
-              teamId: msg.teamId,
+              teamId,
               amount: result.amount!,
               lotEndsAt: result.lotEndsAt!,
               serverTime: Date.now(),
@@ -375,13 +454,14 @@ async function startServer(): Promise<void> {
           break;
         }
         case 'auction:extend_timer': {
-          const err = extendTimer(runtime, clientId, Number(msg.extraSeconds) || 5);
+          const extra = typeof msg.extraSeconds === 'number' && Number.isFinite(msg.extraSeconds) ? msg.extraSeconds : 5;
+          const err = extendTimer(runtime, clientId, extra);
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
           else broadcastRoomState(roomCode);
           break;
         }
         case 'auction:hammer_now': {
-          const p = runtime.state.participants.find((item) => item.clientId === clientId);
+          const p = runtime.state.participants.find((item) => item.clientId === clientId && item.connected);
           if (!p?.isHost) {
             sendToSocket(ws, { type: 'room:error', message: 'Only the host can hammer a lot early.' });
           } else if (!runtime.state.currentLot?.leadingTeamId) {
@@ -393,7 +473,7 @@ async function startServer(): Promise<void> {
           break;
         }
         case 'auction:skip_lot': {
-          const p = runtime.state.participants.find((item) => item.clientId === clientId);
+          const p = runtime.state.participants.find((item) => item.clientId === clientId && item.connected);
           if (!p?.isHost) {
             sendToSocket(ws, { type: 'room:error', message: 'Only the host can skip a lot.' });
           } else if (!runtime.state.currentLot) {
@@ -411,13 +491,14 @@ async function startServer(): Promise<void> {
           break;
         }
         case 'auction:reauction_player': {
-          const err = reauctionPlayer(runtime, clientId, msg.playerId);
+          const playerId = typeof msg.playerId === 'string' ? msg.playerId : '';
+          const err = reauctionPlayer(runtime, clientId, playerId);
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
           else broadcastRoomState(roomCode);
           break;
         }
         case 'auction:next_lot': {
-          const p = runtime.state.participants.find((item) => item.clientId === clientId);
+          const p = runtime.state.participants.find((item) => item.clientId === clientId && item.connected);
           if (!p?.isHost) {
             sendToSocket(ws, { type: 'room:error', message: 'Only the host can advance lots manually.' });
           } else if (runtime.state.phase === 'LOT_RESULT') {
@@ -427,7 +508,7 @@ async function startServer(): Promise<void> {
           break;
         }
         case 'auction:end_early': {
-          const p = runtime.state.participants.find((item) => item.clientId === clientId);
+          const p = runtime.state.participants.find((item) => item.clientId === clientId && item.connected);
           if (!p?.isHost) {
             sendToSocket(ws, { type: 'room:error', message: 'Only the host can conclude the auction.' });
           } else {
@@ -444,28 +525,15 @@ async function startServer(): Promise<void> {
           else broadcastRoomState(roomCode);
           break;
         }
+        default: {
+          sendToSocket(ws, { type: 'room:error', message: 'Unsupported action type.' });
+        }
       }
     });
 
     ws.on('close', () => {
-      const closedMeta = socketMetas.get(ws);
       socketMetas.delete(ws);
-
-      if (closedMeta?.roomCode && closedMeta?.clientId) {
-        const runtime = rooms.get(closedMeta.roomCode);
-        if (runtime) {
-          const participant = runtime.state.participants.find((p) => p.clientId === closedMeta.clientId);
-          if (participant) {
-            const hasAnother = Array.from(socketMetas.values()).some(
-              (m) => m.roomCode === closedMeta.roomCode && m.clientId === closedMeta.clientId,
-            );
-            if (!hasAnother) {
-              participant.connected = false;
-              broadcastRoomState(closedMeta.roomCode);
-            }
-          }
-        }
-      }
+      detachSocketFromRoom(meta);
     });
   });
 
@@ -493,6 +561,9 @@ async function startServer(): Promise<void> {
     app.use(viteServer.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');
+    app.use('/api', (_req, res) => {
+      res.status(404).json({ error: 'API endpoint not found.' });
+    });
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
@@ -500,7 +571,7 @@ async function startServer(): Promise<void> {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`CreaseHammer auction server listening on http://localhost:${PORT}`);
+    console.log(`CreaseHammer auction server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
