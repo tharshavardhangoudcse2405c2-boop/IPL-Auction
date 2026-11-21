@@ -58,7 +58,7 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
             viewBox="0 0 180 220"
             className="h-full w-full"
             role="img"
-            aria-label={`Illustrated avatar for fictional cricketer ${player.name}, ${player.role}`}
+            aria-label={`Illustrated portrait fallback for ${player.name}, ${player.role}`}
           >
             <defs>
               <linearGradient id={`bg-${player.id}`} x1="0" y1="0" x2="0" y2="1">

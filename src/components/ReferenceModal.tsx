@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { FICTIONAL_PLAYER_POOL, SET_ORDER } from '../shared/data.ts';
+import { REAL_PLAYER_POOL, SET_ORDER } from '../shared/data.ts';
 import { formatLakhs, type PlayerSet } from '../shared/types.ts';
 import { PlayerAvatar } from './PlayerAvatar.tsx';
 
@@ -13,9 +13,10 @@ interface ReferenceModalProps {
 export function ReferenceModal({ activeTab, onChangeTab, onClose }: ReferenceModalProps) {
   const [search, setSearch] = useState('');
   const [setFilter, setSetFilter] = useState<'All' | PlayerSet>('All');
+  const [showAll, setShowAll] = useState(false);
 
   const filteredPlayers = useMemo(() => {
-    return FICTIONAL_PLAYER_POOL.filter((p) => {
+    return REAL_PLAYER_POOL.filter((p) => {
       if (setFilter !== 'All' && p.set !== setFilter) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
@@ -40,7 +41,7 @@ export function ReferenceModal({ activeTab, onChangeTab, onClose }: ReferenceMod
           <div className="flex items-center gap-2">
             {(
               [
-                ['pool', 'Player Pool (60)'],
+                ['pool', `Player Pool (${REAL_PLAYER_POOL.length})`],
                 ['rules', 'Rules & Bid Increments'],
                 ['setup', 'Setup & Architecture'],
               ] as const
@@ -75,37 +76,48 @@ export function ReferenceModal({ activeTab, onChangeTab, onClose }: ReferenceMod
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <p className="text-xs text-slate-400">
-                  60 real IPL & international cricketers organized by auction set and tactical specialty.
+                  {REAL_PLAYER_POOL.length} real IPL cricketers organized by auction set and tactical specialty.
                 </p>
                 <div className="relative w-full sm:w-64">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
                   <input
                     type="text"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setShowAll(false);
+                    }}
                     placeholder="Search player, country, role..."
                     className="w-full rounded-lg border border-white/15 bg-[#090D16] py-2 pl-9 pr-3 text-xs text-white focus:border-amber-400 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-1.5">
-                {(['All', ...SET_ORDER] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSetFilter(s)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      setFilter === s ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {(['All', ...SET_ORDER] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => {
+                        setSetFilter(s);
+                        setShowAll(false);
+                      }}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        setFilter === s ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[11px] font-mono-num text-slate-400">
+                  Showing {showAll ? filteredPlayers.length : Math.min(60, filteredPlayers.length)} of {filteredPlayers.length}
+                </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredPlayers.map((p) => (
+                {(showAll ? filteredPlayers : filteredPlayers.slice(0, 60)).map((p) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#090D16] p-3"
@@ -114,10 +126,12 @@ export function ReferenceModal({ activeTab, onChangeTab, onClose }: ReferenceMod
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-white">{p.name}</div>
                       <div className="text-xs text-slate-400">
-                        {p.tacticalRole} · {p.nationality} · Age {p.age} · {p.set}
+                        {p.tacticalRole} · {p.nationality}{p.age !== null ? ` · Age ${p.age}` : ''} · {p.set}
                       </div>
                       <div className="mt-1 font-mono-num text-[11px] text-slate-400">
-                        {p.stats.matches}M · {p.stats.runs}R (SR {p.stats.strikeRate}) · {p.stats.wickets}W
+                        {p.stats.matches !== null ? `${p.stats.matches} IPL M` : 'IPL Player'}
+                        {p.stats.runs !== null ? ` · ${p.stats.runs}R (SR ${p.stats.strikeRate ?? '—'})` : ''}
+                        {p.stats.wickets !== null && p.stats.wickets > 0 ? ` · ${p.stats.wickets}W` : ''}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -129,6 +143,17 @@ export function ReferenceModal({ activeTab, onChangeTab, onClose }: ReferenceMod
                   </div>
                 ))}
               </div>
+              {!showAll && filteredPlayers.length > 60 && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAll(true)}
+                    className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-4 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25"
+                  >
+                    Show All {filteredPlayers.length} Players
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

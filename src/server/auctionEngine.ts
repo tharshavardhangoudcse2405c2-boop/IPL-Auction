@@ -167,7 +167,10 @@ export function sanitizeConfig(raw: Partial<AuctionConfig>): AuctionConfig {
   const timerSeconds = Math.max(8, Math.min(45, Math.round(Number(base.timerSeconds) || 15)));
   const antiSnipeSeconds = Math.max(3, Math.min(10, Math.round(Number(base.antiSnipeSeconds) || 5)));
   const poolPreset =
-    base.poolPreset === 'quick_25' || base.poolPreset === 'standard_40' || base.poolPreset === 'mega_60'
+    base.poolPreset === 'quick_25' ||
+    base.poolPreset === 'standard_40' ||
+    base.poolPreset === 'mega_60' ||
+    base.poolPreset === 'full_pool'
       ? base.poolPreset
       : 'standard_40';
   const enabledSets = Array.isArray(base.enabledSets) && base.enabledSets.length > 0

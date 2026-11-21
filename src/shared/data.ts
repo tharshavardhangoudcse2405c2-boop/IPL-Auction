@@ -1,4 +1,5 @@
 import type { AuctionConfig, FranchiseTemplate, Player, PlayerSet, PoolPreset } from './types.ts';
+import { EXPANDED_RAW_PLAYERS } from './playersExpanded.ts';
 
 export const FRANCHISE_TEMPLATES: FranchiseTemplate[] = [
   { id: 'csk', name: 'Chennai Super Kings', shortCode: 'CSK', color: '#EAB308', accentColor: '#FEF08A', city: 'Chennai' },
@@ -1070,12 +1071,17 @@ const RAW_PLAYERS: Omit<Player, 'photoUrl'>[] = [
   },
 ];
 
-export const FICTIONAL_PLAYER_POOL: Player[] = RAW_PLAYERS.map((p) => ({
+const ALL_RAW_PLAYERS: Omit<Player, 'photoUrl'>[] = [
+  ...RAW_PLAYERS,
+  ...EXPANDED_RAW_PLAYERS,
+];
+
+export const REAL_PLAYER_POOL: Player[] = ALL_RAW_PLAYERS.map((p) => ({
   ...p,
   photoUrl: `/api/player-photo/${p.id}`,
 }));
 
-export const REAL_PLAYER_POOL = FICTIONAL_PLAYER_POOL;
+export const FICTIONAL_PLAYER_POOL = REAL_PLAYER_POOL;
 
 export function buildPlayerQueue(enabledSets: PlayerSet[], preset: PoolPreset): Player[] {
   const limitBySet: Record<PoolPreset, Record<PlayerSet, number>> = {
@@ -1100,21 +1106,36 @@ export function buildPlayerQueue(enabledSets: PlayerSet[], preset: PoolPreset): 
       Wicketkeepers: 10,
       Bowlers: 16,
     },
+    full_pool: {
+      Marquee: Infinity,
+      Batters: Infinity,
+      'All-Rounders': Infinity,
+      Wicketkeepers: Infinity,
+      Bowlers: Infinity,
+    },
   };
 
   const result: Player[] = [];
   for (const setName of SET_ORDER) {
     if (!enabledSets.includes(setName)) continue;
-    const setPlayers = [...REAL_PLAYER_POOL.filter((p) => p.set === setName)];
+    const setPlayers = REAL_PLAYER_POOL.filter((p) => p.set === setName);
     const limit = limitBySet[preset][setName];
-    // Keep top 2 marquee stars first, shuffle the rest in each set for replayability
+    // Keep top 2 marquee stars first
     const lead = setName === 'Marquee' ? setPlayers.slice(0, 2) : [];
-    const rest = setName === 'Marquee' ? setPlayers.slice(2) : setPlayers;
-    for (let i = rest.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [rest[i], rest[j]] = [rest[j], rest[i]];
+    const rest = setName === 'Marquee' ? setPlayers.slice(2) : [...setPlayers];
+
+    if (preset === 'full_pool') {
+      // Order remaining players by scouting rating descending so top stars enter early in each set
+      rest.sort((a, b) => b.rating - a.rating || b.basePrice - a.basePrice);
+      result.push(...lead, ...rest);
+    } else {
+      // Shuffle within each set for replayability across shorter presets
+      for (let i = rest.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [rest[i], rest[j]] = [rest[j], rest[i]];
+      }
+      result.push(...[...lead, ...rest].slice(0, limit));
     }
-    result.push(...[...lead, ...rest].slice(0, limit));
   }
   return result;
 }

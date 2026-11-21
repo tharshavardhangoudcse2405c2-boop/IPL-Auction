@@ -60,6 +60,7 @@ export function LiveAuctionRoom({
   const [inspectedTeamId, setInspectedTeamId] = useState<string | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [pendingBidKey, setPendingBidKey] = useState<string | null>(null);
+  const [showAllQueue, setShowAllQueue] = useState(false);
 
   const prevBidIdRef = useRef<string | null>(null);
   const prevOutcomeTsRef = useRef<number | null>(null);
@@ -266,10 +267,18 @@ export function LiveAuctionRoom({
                         {lot.player.nationality}
                         {lot.player.isOverseas ? ' (Overseas)' : ' (Domestic)'}
                       </span>
-                      <span className="text-slate-600" aria-hidden="true">·</span>
-                      <span className="font-mono-num">Age {lot.player.age}</span>
-                      <span className="text-slate-600" aria-hidden="true">·</span>
-                      <span>{lot.player.battingStyle}</span>
+                      {lot.player.age !== null && (
+                        <>
+                          <span className="text-slate-600" aria-hidden="true">·</span>
+                          <span className="font-mono-num">Age {lot.player.age}</span>
+                        </>
+                      )}
+                      {lot.player.battingStyle !== '—' && (
+                        <>
+                          <span className="text-slate-600" aria-hidden="true">·</span>
+                          <span>{lot.player.battingStyle}</span>
+                        </>
+                      )}
                       {lot.player.bowlingStyle !== '—' && (
                         <>
                           <span className="text-slate-600" aria-hidden="true">·</span>
@@ -282,29 +291,41 @@ export function LiveAuctionRoom({
                   {/* T20 Stats Grid */}
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5 rounded-xl border border-white/10 bg-[#090D16] p-3">
                     <div>
-                      <div className="text-[11px] text-slate-400">Matches</div>
-                      <div className="font-mono-num text-base font-bold text-white">{lot.player.stats.matches}</div>
+                      <div className="text-[11px] text-slate-400">IPL Matches</div>
+                      <div className="font-mono-num text-base font-bold text-white">
+                        {lot.player.stats.matches !== null ? lot.player.stats.matches : '—'}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-400">Runs</div>
-                      <div className="font-mono-num text-base font-bold text-white">{lot.player.stats.runs}</div>
+                      <div className="font-mono-num text-base font-bold text-white">
+                        {lot.player.stats.runs !== null ? lot.player.stats.runs : '—'}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-400">Strike Rate</div>
-                      <div className="font-mono-num text-base font-bold text-white">{lot.player.stats.strikeRate.toFixed(1)}</div>
+                      <div className="font-mono-num text-base font-bold text-white">
+                        {lot.player.stats.strikeRate !== null ? lot.player.stats.strikeRate.toFixed(1) : '—'}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-400">Average</div>
-                      <div className="font-mono-num text-base font-bold text-white">{lot.player.stats.average.toFixed(1)}</div>
+                      <div className="font-mono-num text-base font-bold text-white">
+                        {lot.player.stats.average !== null ? lot.player.stats.average.toFixed(1) : '—'}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-400">Wickets</div>
-                      <div className="font-mono-num text-base font-bold text-white">{lot.player.stats.wickets}</div>
+                      <div className="font-mono-num text-base font-bold text-white">
+                        {lot.player.stats.wickets !== null ? lot.player.stats.wickets : '—'}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[11px] text-slate-400">Economy</div>
                       <div className="font-mono-num text-base font-bold text-white">
-                        {lot.player.stats.economy > 0 ? lot.player.stats.economy.toFixed(2) : '—'}
+                        {lot.player.stats.economy !== null && lot.player.stats.economy > 0
+                          ? lot.player.stats.economy.toFixed(2)
+                          : '—'}
                       </div>
                     </div>
                   </div>
@@ -917,24 +938,35 @@ export function LiveAuctionRoom({
                       Queue is empty.
                     </div>
                   ) : (
-                    state.playerQueue.slice(0, 25).map((p, idx) => (
-                      <div
-                        key={p.id}
-                        className="flex items-center justify-between rounded-lg border border-white/10 bg-[#090D16] px-3 py-2 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-white">
-                            {idx + 1}. {p.name}
+                    <>
+                      {(showAllQueue ? state.playerQueue : state.playerQueue.slice(0, 40)).map((p, idx) => (
+                        <div
+                          key={p.id}
+                          className="flex items-center justify-between rounded-lg border border-white/10 bg-[#090D16] px-3 py-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-white">
+                              {idx + 1}. {p.name}
+                            </div>
+                            <div className="text-slate-400">
+                              {p.set} · {p.role} · {p.nationality}
+                            </div>
                           </div>
-                          <div className="text-slate-400">
-                            {p.set} · {p.role} · {p.nationality}
-                          </div>
+                          <span className="font-mono-num text-slate-300 shrink-0">
+                            {formatLakhs(p.basePrice)}
+                          </span>
                         </div>
-                        <span className="font-mono-num text-slate-300 shrink-0">
-                          {formatLakhs(p.basePrice)}
-                        </span>
-                      </div>
-                    ))
+                      ))}
+                      {!showAllQueue && state.playerQueue.length > 40 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllQueue(true)}
+                          className="w-full rounded-lg border border-white/15 bg-white/5 py-2 text-xs font-semibold text-amber-300 hover:bg-white/10"
+                        >
+                          Show All {state.playerQueue.length} Queued Players
+                        </button>
+                      )}
+                    </>
                   )}
                 </>
               )}

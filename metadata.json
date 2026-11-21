@@ -2,5 +2,7 @@
   "name": "CreaseHammer",
   "description": "Live IPL-style cricket auction game for 2–12 teams with online multiplayer, solo vs. AI bots, and shared-screen local multiplayer.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

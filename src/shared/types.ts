@@ -14,17 +14,17 @@ export type TacticalRole =
   | 'Wicketkeeper-Batter';
 
 export type PlayerSet = 'Marquee' | 'Batters' | 'All-Rounders' | 'Wicketkeepers' | 'Bowlers';
-export type PoolPreset = 'quick_25' | 'standard_40' | 'mega_60';
+export type PoolPreset = 'quick_25' | 'standard_40' | 'mega_60' | 'full_pool';
 
 export type RoomPhase = 'LOBBY' | 'LIVE' | 'PAUSED' | 'LOT_RESULT' | 'COMPLETED';
 
 export interface PlayerStats {
-  matches: number;
-  runs: number;
-  strikeRate: number;
-  average: number;
-  wickets: number;
-  economy: number;
+  matches: number | null;
+  runs: number | null;
+  strikeRate: number | null;
+  average: number | null;
+  wickets: number | null;
+  economy: number | null;
 }
 
 export interface Player {
@@ -35,7 +35,7 @@ export interface Player {
   set: PlayerSet;
   nationality: string;
   isOverseas: boolean;
-  age: number;
+  age: number | null;
   basePrice: number; // in Lakhs (100 Lakhs = 1 Crore)
   battingStyle: string;
   bowlingStyle: string;

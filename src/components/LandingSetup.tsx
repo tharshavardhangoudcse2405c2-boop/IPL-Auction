@@ -11,6 +11,7 @@ import {
 import {
   DEFAULT_CONFIG,
   FRANCHISE_TEMPLATES,
+  REAL_PLAYER_POOL,
   SET_ORDER,
 } from '../shared/data.ts';
 import {
@@ -124,9 +125,13 @@ export function LandingSetup({
   };
 
   const poolCountLabel =
-    config.poolPreset === 'quick_25' ? 'Up to 25 players' :
-    config.poolPreset === 'standard_40' ? 'Up to 40 players' :
-    'Up to 60 players';
+    config.poolPreset === 'quick_25'
+      ? 'Up to 25 players'
+      : config.poolPreset === 'standard_40'
+        ? 'Up to 40 players'
+        : config.poolPreset === 'mega_60'
+          ? 'Up to 60 players'
+          : `All ${REAL_PLAYER_POOL.length} players`;
 
   return (
     <div className="mx-auto max-w-[1360px] px-4 py-6 sm:px-6 lg:px-8 space-y-10">
@@ -221,7 +226,7 @@ export function LandingSetup({
                 Real IPL & International Cricketers · Verified Portraits
               </div>
               <div className="mt-1 text-sm text-slate-200">
-                60 star cricketers across Marquee, Batters, All-Rounders, Wicketkeepers, and Bowlers with tactical AI opposition.
+                {REAL_PLAYER_POOL.length} real IPL cricketers across Marquee, Batters, All-Rounders, Wicketkeepers, and Bowlers with tactical AI opposition.
               </div>
             </div>
           </div>
@@ -370,7 +375,8 @@ export function LandingSetup({
             >
               <option value="quick_25">Quick Draft (25)</option>
               <option value="standard_40">Standard Auction (40)</option>
-              <option value="mega_60">Mega Auction (60)</option>
+              <option value="mega_60">Mega Draft (60)</option>
+              <option value="full_pool">Full IPL Pool ({REAL_PLAYER_POOL.length})</option>
             </select>
           </label>
         </div>
@@ -584,7 +590,7 @@ export function LandingSetup({
               onClick={() => onOpenReference('pool')}
               className="text-amber-400 hover:text-amber-300 underline underline-offset-4 whitespace-nowrap"
             >
-              Inspect Player Pool (60)
+              Inspect Player Pool ({REAL_PLAYER_POOL.length})
             </button>
             <span className="text-slate-600" aria-hidden="true">·</span>
             <button
