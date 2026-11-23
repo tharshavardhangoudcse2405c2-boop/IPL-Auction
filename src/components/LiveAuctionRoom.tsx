@@ -14,9 +14,13 @@ import {
 import { motion } from 'motion/react';
 import {
   playBidSound,
+  playExtendTimerSound,
+  playNewLotSound,
+  playPauseResumeSound,
   playSoldSound,
   playTickSound,
   playUnsoldSound,
+  unlockAudio,
 } from '../client/audio.ts';
 import {
   evaluateTeamBidEligibility,
@@ -62,8 +66,19 @@ export function LiveAuctionRoom({
   const [pendingBidKey, setPendingBidKey] = useState<string | null>(null);
   const [showAllQueue, setShowAllQueue] = useState(false);
 
-  const prevBidIdRef = useRef<string | null>(null);
-  const prevOutcomeTsRef = useRef<number | null>(null);
+  const prevBidIdRef = useRef<string | null>(state.currentLot?.bidHistory[0]?.id ?? null);
+  const prevOutcomeTsRef = useRef<number | null>(state.lastOutcome?.timestamp ?? null);
+  const prevLotNumRef = useRef<number | null>(null);
+  const prevPhaseRef = useRef<AuctionRoomState['phase']>(state.phase);
+  const prevLotEndsAtRef = useRef<{ lotNum: number; endsAt: number; bidsLen: number } | null>(
+    state.currentLot
+      ? {
+          lotNum: state.currentLot.lotNumber,
+          endsAt: state.currentLot.lotEndsAt,
+          bidsLen: state.currentLot.bidHistory.length,
+        }
+      : null,
+  );
   const lastTickSecRef = useRef<number | null>(null);
   const pendingTimerRef = useRef<number | null>(null);
 
@@ -94,6 +109,48 @@ export function LiveAuctionRoom({
   const timerPct = lot
     ? Math.max(0, Math.min(100, (remainingMs / (state.config.timerSeconds * 1000)) * 100))
     : 0;
+
+  useEffect(() => {
+    if (lot && state.phase === 'LIVE' && prevLotNumRef.current !== lot.lotNumber) {
+      prevLotNumRef.current = lot.lotNumber;
+      playNewLotSound(muted);
+    }
+  }, [lot, state.phase, muted]);
+
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    if (prev !== state.phase) {
+      prevPhaseRef.current = state.phase;
+      if (prev === 'LIVE' && state.phase === 'PAUSED') {
+        playPauseResumeSound(muted, true);
+      } else if (prev === 'PAUSED' && state.phase === 'LIVE') {
+        playPauseResumeSound(muted, false);
+      }
+    }
+  }, [state.phase, muted]);
+
+  useEffect(() => {
+    if (!lot || state.phase !== 'LIVE') {
+      prevLotEndsAtRef.current = lot
+        ? { lotNum: lot.lotNumber, endsAt: lot.lotEndsAt, bidsLen: lot.bidHistory.length }
+        : null;
+      return;
+    }
+    const prev = prevLotEndsAtRef.current;
+    if (
+      prev &&
+      prev.lotNum === lot.lotNumber &&
+      prev.bidsLen === lot.bidHistory.length &&
+      lot.lotEndsAt - prev.endsAt > 2500
+    ) {
+      playExtendTimerSound(muted);
+    }
+    prevLotEndsAtRef.current = {
+      lotNum: lot.lotNumber,
+      endsAt: lot.lotEndsAt,
+      bidsLen: lot.bidHistory.length,
+    };
+  }, [lot, state.phase, muted]);
 
   useEffect(() => {
     const latestBid = lot?.bidHistory[0] ?? null;
@@ -161,6 +218,7 @@ export function LiveAuctionRoom({
 
   const handlePlaceBid = (teamId: string, expectedAmount: number) => {
     if (!lot) return;
+    unlockAudio();
     const key = `${lot.lotNumber}:${teamId}:${expectedAmount}`;
     setPendingBidKey(key);
     if (pendingTimerRef.current !== null) {

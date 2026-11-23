@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Sliders, Volume2, VolumeX, WifiOff, X } from 'lucide-react';
+import { RefreshCw, WifiOff, X } from 'lucide-react';
+import {
+  playClickSound,
+  playRejectedSound,
+  playSeatClaimSound,
+  setupAudioUnlock,
+  unlockAudio,
+} from './client/audio.ts';
 import { useAppRouter } from './client/router.ts';
 import { useAuctionSocket } from './client/useAuctionSocket.ts';
 import { AuctionWinnerPage } from './components/AuctionWinnerPage.tsx';
@@ -15,6 +22,11 @@ import type { AuctionRoomState } from './shared/types.ts';
 
 export default function App() {
   const { route, navigate } = useAppRouter();
+  const muted = false;
+
+  useEffect(() => {
+    return setupAudioUnlock();
+  }, []);
 
   const handleRoomJoined = useCallback(
     (joinedState: AuctionRoomState) => {
@@ -27,6 +39,14 @@ export default function App() {
     },
     [navigate],
   );
+
+  const handleSoundEvent = useCallback((kind: 'joined' | 'rejected') => {
+    if (kind === 'joined') {
+      playSeatClaimSound(false);
+    } else if (kind === 'rejected') {
+      playRejectedSound(false);
+    }
+  }, []);
 
   const {
     status,
@@ -44,14 +64,19 @@ export default function App() {
     manualReconnect,
   } = useAuctionSocket({
     onRoomJoined: handleRoomJoined,
+    onSoundEvent: handleSoundEvent,
   });
 
-  const [muted, setMuted] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(() =>
+  const [reducedMotion] = useState(() =>
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
   );
-  const [prefsOpen, setPrefsOpen] = useState(false);
+
+  const handleNav = (path: string) => {
+    unlockAudio();
+    playClickSound(muted);
+    navigate(path);
+  };
 
   useEffect(() => {
     const root = document.documentElement;
@@ -155,6 +180,7 @@ export default function App() {
           <LobbyRoom
             state={roomState}
             clientId={clientId}
+            muted={muted}
             onSend={sendMessage}
             onLeave={handleLeaveRoom}
           />
@@ -178,6 +204,7 @@ export default function App() {
             state={roomState}
             clientId={clientId}
             sessionToken={sessionToken}
+            muted={muted}
             onSend={sendMessage}
             onLeave={handleLeaveRoom}
             onViewResults={() => navigate(`/room/${roomState.roomCode}/results`)}
@@ -208,20 +235,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#131B2B] text-[#CFEAE0]">
-      {/* 3-Zone Top Bar Contract */}
+      {/* Top Header */}
       <header className="border-b border-[#5B91A3]/30 bg-[#1B273B]">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 sm:gap-8 px-4 py-3.5 sm:px-6">
-          {/* Zone 1: Single text element wordmark */}
+        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-4 sm:gap-8 px-4 py-3.5 sm:px-6">
+          {/* Wordmark */}
           <button
             type="button"
-            onClick={() => navigate('/')}
+            onClick={() => handleNav('/')}
             className="font-display text-2xl font-extrabold tracking-tight text-[#CFEAE0] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[#5B91A3]"
           >
             Real Auction 26
           </button>
 
-          {/* Zone 2: Concise single-line nav links for each separate page */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-[#CFEAE0]/80">
+          {/* Navigation links for each separate page */}
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-1.5 sm:gap-6 text-sm font-semibold text-[#CFEAE0]/80">
             {(
               [
                 ['/', 'Home', route.page === 'home'],
@@ -234,7 +261,7 @@ export default function App() {
               <button
                 key={path}
                 type="button"
-                onClick={() => navigate(path)}
+                onClick={() => handleNav(path)}
                 className={`transition-colors whitespace-nowrap shrink-0 underline-offset-4 ${
                   active
                     ? 'text-[#CFEAE0] underline decoration-[#5B91A3] decoration-2'
@@ -245,70 +272,6 @@ export default function App() {
               </button>
             ))}
           </nav>
-
-          {/* Zone 3: Broadcast Preferences */}
-          <div className="relative flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => setPrefsOpen((v) => !v)}
-              aria-expanded={prefsOpen}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#5B91A3]/45 bg-[#2F4A63] px-3.5 py-2 text-xs font-bold text-[#CFEAE0] hover:bg-[#3A5975] transition-colors whitespace-nowrap shrink-0"
-            >
-              {muted ? (
-                <VolumeX className="h-4 w-4 text-[#CFEAE0]/70" aria-hidden="true" />
-              ) : (
-                <Volume2 className="h-4 w-4 text-[#CFEAE0]" aria-hidden="true" />
-              )}
-              <span className="hidden sm:inline">Preferences</span>
-            </button>
-
-            {prefsOpen && (
-              <div className="absolute right-0 top-full mt-2 w-68 rounded-2xl border border-[#5B91A3]/45 bg-[#2F4A63] p-4 shadow-2xl z-40 space-y-3">
-                <div className="flex items-center justify-between text-xs font-bold text-[#CFEAE0]">
-                  <span>Broadcast Preferences</span>
-                  <Sliders className="h-3.5 w-3.5 text-[#CFEAE0]/75" aria-hidden="true" />
-                </div>
-
-                <label className="flex items-center justify-between gap-3 text-xs text-[#CFEAE0]/90 cursor-pointer">
-                  <span>Mute Sound Effects</span>
-                  <input
-                    type="checkbox"
-                    checked={muted}
-                    onChange={(e) => setMuted(e.target.checked)}
-                    className="h-4 w-4 accent-[#5B91A3]"
-                  />
-                </label>
-
-                <label className="flex items-center justify-between gap-3 text-xs text-[#CFEAE0]/90 cursor-pointer">
-                  <span>Reduced Motion</span>
-                  <input
-                    type="checkbox"
-                    checked={reducedMotion}
-                    onChange={(e) => setReducedMotion(e.target.checked)}
-                    className="h-4 w-4 accent-[#5B91A3]"
-                  />
-                </label>
-
-                <div className="border-t border-[#CFEAE0]/15 pt-2.5 flex md:hidden flex-wrap gap-2 text-xs font-semibold">
-                  <button type="button" onClick={() => { setPrefsOpen(false); navigate('/'); }} className="text-[#CFEAE0] hover:underline">
-                    Home
-                  </button>
-                  <button type="button" onClick={() => { setPrefsOpen(false); navigate('/create'); }} className="text-[#CFEAE0] hover:underline">
-                    Create
-                  </button>
-                  <button type="button" onClick={() => { setPrefsOpen(false); navigate('/join'); }} className="text-[#CFEAE0] hover:underline">
-                    Join
-                  </button>
-                  <button type="button" onClick={() => { setPrefsOpen(false); navigate('/players'); }} className="text-[#CFEAE0] hover:underline">
-                    Player Pool
-                  </button>
-                  <button type="button" onClick={() => { setPrefsOpen(false); navigate('/rules'); }} className="text-[#CFEAE0] hover:underline">
-                    Rules
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </header>
 
@@ -339,29 +302,6 @@ export default function App() {
 
       {/* Main Content View */}
       <main className="flex-1">{renderPage()}</main>
-
-      {/* Clean Minimal Footer */}
-      <footer className="border-t border-[#5B91A3]/25 bg-[#1B273B] px-4 py-4 text-xs text-[#CFEAE0]/75">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
-          <span>
-            Real Auction 26 · IPL-style cricket auction simulator with real cricketers & post-auction AI squad analysis
-          </span>
-          <div className="flex items-center gap-4">
-            <button type="button" onClick={() => navigate('/create')} className="hover:text-[#CFEAE0]">
-              Create
-            </button>
-            <button type="button" onClick={() => navigate('/join')} className="hover:text-[#CFEAE0]">
-              Join
-            </button>
-            <button type="button" onClick={() => navigate('/players')} className="hover:text-[#CFEAE0]">
-              Player Pool
-            </button>
-            <button type="button" onClick={() => navigate('/rules')} className="hover:text-[#CFEAE0]">
-              Rules & Setup
-            </button>
-          </div>
-        </div>
-      </footer>
 
       {/* Toast Stack */}
       {toasts.length > 0 && (

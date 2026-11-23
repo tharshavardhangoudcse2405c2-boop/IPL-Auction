@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Award,
@@ -12,6 +12,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { apiFetch, type ApiErrorPayload } from '../client/api.ts';
+import { playWinnerFanfareSound } from '../client/audio.ts';
 import {
   formatLakhsCompact,
   type AuctionRoomState,
@@ -24,6 +25,7 @@ interface AuctionWinnerPageProps {
   state: AuctionRoomState;
   clientId: string;
   sessionToken: string;
+  muted: boolean;
   onSend: (msg: ClientMessage) => void;
   onLeave: () => void;
   onViewResults: () => void;
@@ -47,6 +49,7 @@ export function AuctionWinnerPage({
   state,
   clientId,
   sessionToken,
+  muted,
   onSend,
   onLeave,
   onViewResults,
@@ -58,9 +61,17 @@ export function AuctionWinnerPage({
     state.winnerAnalysis?.winnerTeamId ?? null,
   );
   const [showAllTeamsAnalysis, setShowAllTeamsAnalysis] = useState<boolean>(false);
+  const fanfarePlayedRef = useRef(false);
 
   const me = state.participants.find((p) => p.clientId === clientId);
   const isHost = Boolean(me?.isHost);
+
+  useEffect(() => {
+    if (analysis && !fanfarePlayedRef.current) {
+      fanfarePlayedRef.current = true;
+      playWinnerFanfareSound(muted);
+    }
+  }, [analysis, muted]);
 
   useEffect(() => {
     if (state.winnerAnalysis) {

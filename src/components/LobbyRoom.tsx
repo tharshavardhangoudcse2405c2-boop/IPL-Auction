@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { Check, Copy, Link2, Play, ShieldCheck, Users } from 'lucide-react';
+import { playClickSound, playSeatClaimSound, unlockAudio } from '../client/audio.ts';
 import { formatLakhs, type AuctionRoomState, type ClientMessage } from '../shared/types.ts';
 import { TeamCrest } from './TeamCrest.tsx';
 
 interface LobbyRoomProps {
   state: AuctionRoomState;
   clientId: string;
+  muted: boolean;
   onSend: (msg: ClientMessage) => void;
   onLeave: () => void;
 }
 
-export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) {
+export function LobbyRoom({ state, clientId, muted, onSend, onLeave }: LobbyRoomProps) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
@@ -95,7 +97,11 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
           {!isHost && me && (
             <button
               type="button"
-              onClick={() => onSend({ type: 'room:toggle_ready', ready: !me.isReady })}
+              onClick={() => {
+                unlockAudio();
+                playSeatClaimSound(muted);
+                onSend({ type: 'room:toggle_ready', ready: !me.isReady });
+              }}
               className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors whitespace-nowrap shrink-0 ${
                 me.isReady
                   ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200'
@@ -116,7 +122,10 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
           {isHost && (
             <button
               type="button"
-              onClick={() => onSend({ type: 'auction:start' })}
+              onClick={() => {
+                unlockAudio();
+                onSend({ type: 'auction:start' });
+              }}
               className="inline-flex items-center gap-2 rounded-xl bg-[#5B91A3] px-5 py-2.5 text-sm font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap shrink-0"
             >
               <Play className="h-4 w-4 fill-current" aria-hidden="true" />
@@ -230,7 +239,11 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                     {isOnline && isMine && (
                       <button
                         type="button"
-                        onClick={() => onSend({ type: 'room:claim_team', teamId: null })}
+                        onClick={() => {
+                          unlockAudio();
+                          playClickSound(muted);
+                          onSend({ type: 'room:claim_team', teamId: null });
+                        }}
                         className="rounded-lg border border-[#5B91A3]/55 bg-[#2F4A63] px-3 py-1.5 text-xs font-bold text-[#CFEAE0] hover:bg-[#5B91A3] hover:text-[#131B2B] whitespace-nowrap"
                       >
                         Release
@@ -239,7 +252,11 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                     {canClaim && (
                       <button
                         type="button"
-                        onClick={() => onSend({ type: 'room:claim_team', teamId: team.id })}
+                        onClick={() => {
+                          unlockAudio();
+                          playSeatClaimSound(muted);
+                          onSend({ type: 'room:claim_team', teamId: team.id });
+                        }}
                         className="rounded-lg bg-[#5B91A3] px-3 py-1.5 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap"
                       >
                         Claim

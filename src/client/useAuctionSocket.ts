@@ -57,9 +57,10 @@ export interface ToastNotice {
 
 interface UseAuctionSocketOptions {
   onRoomJoined?: (state: AuctionRoomState) => void;
+  onSoundEvent?: (kind: 'joined' | 'rejected') => void;
 }
 
-export function useAuctionSocket({ onRoomJoined }: UseAuctionSocketOptions = {}) {
+export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocketOptions = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [roomState, setRoomState] = useState<AuctionRoomState | null>(null);
   const [clientId, setClientId] = useState<string>('');
@@ -76,10 +77,15 @@ export function useAuctionSocket({ onRoomJoined }: UseAuctionSocketOptions = {})
   const pendingActionRef = useRef<ClientMessage | null>(null);
   const intentionalCloseRef = useRef<boolean>(false);
   const onRoomJoinedRef = useRef(onRoomJoined);
+  const onSoundEventRef = useRef(onSoundEvent);
 
   useEffect(() => {
     onRoomJoinedRef.current = onRoomJoined;
   }, [onRoomJoined]);
+
+  useEffect(() => {
+    onSoundEventRef.current = onSoundEvent;
+  }, [onSoundEvent]);
 
   const pushToast = useCallback((kind: ToastNotice['kind'], message: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
@@ -210,6 +216,7 @@ export function useAuctionSocket({ onRoomJoined }: UseAuctionSocketOptions = {})
           };
           activeSessionRef.current = hint;
           saveRoomSession(hint);
+          onSoundEventRef.current?.('joined');
           onRoomJoinedRef.current?.(msg.state);
           return;
         }
@@ -221,11 +228,13 @@ export function useAuctionSocket({ onRoomJoined }: UseAuctionSocketOptions = {})
         }
 
         if (msg.type === 'bid:rejected') {
+          onSoundEventRef.current?.('rejected');
           pushToast('error', msg.reason);
           return;
         }
 
         if (msg.type === 'room:error') {
+          onSoundEventRef.current?.('rejected');
           pushToast('error', msg.message);
           if (msg.code === 'ROOM_NOT_FOUND' || msg.code === 'ROOM_EXPIRED') {
             activeSessionRef.current = null;
