@@ -7,10 +7,10 @@ interface PlayerAvatarProps {
 }
 
 const ROLE_PALETTE: Record<Player['role'], { from: string; to: string; jersey: string; trim: string }> = {
-  Batter: { from: '#162544', to: '#0B1324', jersey: '#1D4ED8', trim: '#F59E0B' },
-  Bowler: { from: '#142A33', to: '#0A141A', jersey: '#0F766E', trim: '#5EEAD4' },
-  'All-Rounder': { from: '#2D1624', to: '#120A10', jersey: '#9F1239', trim: '#FBBF24' },
-  Wicketkeeper: { from: '#1C1D3F', to: '#0C0D1D', jersey: '#4338CA', trim: '#93C5FD' },
+  Batter: { from: '#2F4A63', to: '#131B2B', jersey: '#5B91A3', trim: '#CFEAE0' },
+  Bowler: { from: '#25425A', to: '#131B2B', jersey: '#43798C', trim: '#CFEAE0' },
+  'All-Rounder': { from: '#34516B', to: '#131B2B', jersey: '#5B91A3', trim: '#CFEAE0' },
+  Wicketkeeper: { from: '#283F57', to: '#131B2B', jersey: '#4D8296', trim: '#CFEAE0' },
 };
 
 function getInitials(name: string): string {
@@ -38,7 +38,7 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
 
   return (
     <div
-      className={`relative overflow-hidden shrink-0 border border-white/10 ${containerClass}`}
+      className={`relative overflow-hidden shrink-0 border border-[#5B91A3]/35 ${containerClass}`}
       style={{
         background: `linear-gradient(165deg, ${palette.from}, ${palette.to})`,
       }}
@@ -47,13 +47,13 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
         <img
           src={player.photoUrl}
           alt={`Portrait of ${player.name}, ${player.role} from ${player.nationality}`}
+          loading={size === 'hero' ? 'eager' : 'lazy'}
           referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
           className="h-full w-full object-cover object-top"
         />
       ) : (
         <div className="flex h-full w-full flex-col items-center justify-end select-none">
-          {/* Crisp bespoke vector athlete silhouette + jersey collar fallback */}
           <svg
             viewBox="0 0 180 220"
             className="h-full w-full"
@@ -67,18 +67,15 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
               </linearGradient>
               <linearGradient id={`jersey-${player.id}`} x1="0" y1="0" x2="1" y2="1">
                 <stop offset="0%" stopColor={palette.jersey} />
-                <stop offset="100%" stopColor="#0F172A" />
+                <stop offset="100%" stopColor="#131B2B" />
               </linearGradient>
             </defs>
             <rect width="180" height="220" fill={`url(#bg-${player.id})`} />
-            {/* Subtle stadium spotlight arch */}
             <circle cx="90" cy="76" r="56" fill={palette.trim} fillOpacity="0.08" />
-            {/* Shoulders / Jersey */}
             <path
               d="M22 220 C26 164, 52 146, 90 146 C128 146, 154 164, 158 220 Z"
               fill={`url(#jersey-${player.id})`}
             />
-            {/* Collar trim */}
             <path
               d="M68 147 L90 167 L112 147"
               fill="none"
@@ -87,21 +84,18 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
               strokeLinecap="round"
               strokeLinejoin="round"
             />
-            {/* Neck & Head silhouette */}
-            <rect x="76" y="118" width="28" height="32" rx="10" fill="#CBD5E1" fillOpacity="0.88" />
-            <ellipse cx="90" cy="86" rx="30" ry="36" fill="#E2E8F0" fillOpacity="0.92" />
-            {/* Hair / Cap contour */}
+            <rect x="76" y="118" width="28" height="32" rx="10" fill="#CFEAE0" fillOpacity="0.88" />
+            <ellipse cx="90" cy="86" rx="30" ry="36" fill="#CFEAE0" fillOpacity="0.94" />
             <path
               d="M59 80 C60 50, 120 50, 121 80 C112 67, 68 67, 59 80 Z"
-              fill="#1E293B"
+              fill="#131B2B"
             />
-            {/* Initials monogram on chest */}
             <text
               x="90"
               y="196"
               textAnchor="middle"
-              fill="#F8FAFC"
-              fillOpacity="0.9"
+              fill="#CFEAE0"
+              fillOpacity="0.95"
               fontFamily="Barlow Condensed, sans-serif"
               fontWeight="700"
               fontSize="24"
@@ -114,7 +108,7 @@ export function PlayerAvatar({ player, size = 'hero' }: PlayerAvatarProps) {
       )}
       {size === 'hero' && (
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#090D16]/85 via-[#090D16]/35 to-transparent"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#131B2B]/85 via-[#131B2B]/35 to-transparent"
           aria-hidden="true"
         />
       )}

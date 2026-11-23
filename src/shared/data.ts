@@ -1,5 +1,6 @@
 import type { AuctionConfig, FranchiseTemplate, Player, PlayerSet, PoolPreset } from './types.ts';
 import { EXPANDED_RAW_PLAYERS } from './playersExpanded.ts';
+import { VERIFIED_PHOTO_IDS } from './verifiedPhotoIds.ts';
 
 export const FRANCHISE_TEMPLATES: FranchiseTemplate[] = [
   { id: 'csk', name: 'Chennai Super Kings', shortCode: 'CSK', color: '#EAB308', accentColor: '#FEF08A', city: 'Chennai' },
@@ -1078,7 +1079,7 @@ const ALL_RAW_PLAYERS: Omit<Player, 'photoUrl'>[] = [
 
 export const REAL_PLAYER_POOL: Player[] = ALL_RAW_PLAYERS.map((p) => ({
   ...p,
-  photoUrl: `/api/player-photo/${p.id}`,
+  photoUrl: VERIFIED_PHOTO_IDS.has(p.id) ? `/api/player-photo/${p.id}` : undefined,
 }));
 
 export const FICTIONAL_PLAYER_POOL = REAL_PLAYER_POOL;

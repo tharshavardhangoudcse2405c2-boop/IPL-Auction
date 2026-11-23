@@ -1,28 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AuctionConfig, AuctionRoomState, ClientMessage, ServerMessage, Team } from '../shared/types.ts';
+import type {
+  AuctionConfig,
+  AuctionRoomState,
+  ClientMessage,
+  ServerMessage,
+  Team,
+} from '../shared/types.ts';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
-interface SavedSession {
+interface RoomSessionHint {
   roomCode: string;
   clientId: string;
   sessionToken: string;
   clientName: string;
 }
 
-const SESSION_KEY = 'creasehammer_session_v1';
+const ACTIVE_SESSION_KEY = 'ra26_session_v1';
 
-function loadSavedSession(): SavedSession | null {
+function loadRoomSession(): RoomSessionHint | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(ACTIVE_SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<SavedSession>;
-    if (parsed.roomCode && parsed.clientId && parsed.sessionToken) {
+    const parsed = JSON.parse(raw) as Partial<RoomSessionHint>;
+    if (parsed.roomCode) {
       return {
-        roomCode: parsed.roomCode,
-        clientId: parsed.clientId,
-        sessionToken: parsed.sessionToken,
-        clientName: parsed.clientName || 'Manager',
+        roomCode: String(parsed.roomCode).trim().toUpperCase(),
+        clientId: typeof parsed.clientId === 'string' ? parsed.clientId : '',
+        sessionToken: typeof parsed.sessionToken === 'string' ? parsed.sessionToken : '',
+        clientName: typeof parsed.clientName === 'string' && parsed.clientName ? parsed.clientName : 'Manager',
       };
     }
     return null;
@@ -31,23 +37,16 @@ function loadSavedSession(): SavedSession | null {
   }
 }
 
-function saveSession(session: SavedSession | null): void {
+function saveRoomSession(hint: RoomSessionHint | null): void {
   try {
-    if (!session) {
-      sessionStorage.removeItem(SESSION_KEY);
+    if (!hint) {
+      sessionStorage.removeItem(ACTIVE_SESSION_KEY);
     } else {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(hint));
     }
   } catch {
     // Ignore storage quota issues
   }
-}
-
-function makeClientId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `cli-${crypto.randomUUID().slice(0, 12)}`;
-  }
-  return `cli-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export interface ToastNotice {
@@ -56,10 +55,15 @@ export interface ToastNotice {
   message: string;
 }
 
-export function useAuctionSocket() {
+interface UseAuctionSocketOptions {
+  onRoomJoined?: (state: AuctionRoomState) => void;
+}
+
+export function useAuctionSocket({ onRoomJoined }: UseAuctionSocketOptions = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [roomState, setRoomState] = useState<AuctionRoomState | null>(null);
-  const [clientId, setClientId] = useState<string>(() => loadSavedSession()?.clientId || makeClientId());
+  const [clientId, setClientId] = useState<string>('');
+  const [sessionToken, setSessionToken] = useState<string>('');
   const [clockOffsetMs, setClockOffsetMs] = useState<number>(0);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -68,16 +72,21 @@ export function useAuctionSocket() {
   const reconnectTimerRef = useRef<number | null>(null);
   const heartbeatTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef<number>(0);
-  const activeSessionRef = useRef<SavedSession | null>(loadSavedSession());
+  const activeSessionRef = useRef<RoomSessionHint | null>(loadRoomSession());
   const pendingActionRef = useRef<ClientMessage | null>(null);
   const intentionalCloseRef = useRef<boolean>(false);
+  const onRoomJoinedRef = useRef(onRoomJoined);
+
+  useEffect(() => {
+    onRoomJoinedRef.current = onRoomJoined;
+  }, [onRoomJoined]);
 
   const pushToast = useCallback((kind: ToastNotice['kind'], message: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
     setToasts((prev) => [...prev.slice(-3), { id, kind, message }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4200);
+    }, 4500);
   }, []);
 
   const dismissToast = useCallback((id: number) => {
@@ -95,12 +104,29 @@ export function useAuctionSocket() {
     }
   }, []);
 
+  const resetRoomState = useCallback(() => {
+    intentionalCloseRef.current = true;
+    clearTimers();
+    wsRef.current?.close();
+    wsRef.current = null;
+    activeSessionRef.current = null;
+    saveRoomSession(null);
+    setRoomState(null);
+    setClientId('');
+    setSessionToken('');
+    setStatus('idle');
+    setConnectionError(null);
+  }, [clearTimers]);
+
   const connectSocket = useCallback(
     (onOpenMessage?: ClientMessage) => {
       clearTimers();
       intentionalCloseRef.current = false;
 
-      if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+      if (
+        wsRef.current &&
+        (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)
+      ) {
         if (wsRef.current.readyState === WebSocket.OPEN && onOpenMessage) {
           wsRef.current.send(JSON.stringify(onOpenMessage));
           return;
@@ -129,14 +155,14 @@ export function useAuctionSocket() {
           ws.send(JSON.stringify(pendingActionRef.current));
           pendingActionRef.current = null;
         } else if (activeSessionRef.current) {
-          const s = activeSessionRef.current;
+          const hint = activeSessionRef.current;
           ws.send(
             JSON.stringify({
               type: 'room:join',
-              roomCode: s.roomCode,
-              clientId: s.clientId,
-              clientName: s.clientName,
-              sessionToken: s.sessionToken,
+              roomCode: hint.roomCode,
+              clientId: hint.clientId,
+              sessionToken: hint.sessionToken,
+              clientName: hint.clientName,
             } satisfies ClientMessage),
           );
         }
@@ -146,7 +172,6 @@ export function useAuctionSocket() {
             ws.send(JSON.stringify({ type: 'ping', clientSentAt: Date.now() } satisfies ClientMessage));
           }
         }, 8000);
-        // Immediate initial RTT clock calibration
         ws.send(JSON.stringify({ type: 'ping', clientSentAt: Date.now() } satisfies ClientMessage));
       };
 
@@ -172,24 +197,20 @@ export function useAuctionSocket() {
 
         if (msg.type === 'room:joined') {
           setClientId(msg.clientId);
+          setSessionToken(msg.sessionToken);
           setRoomState(msg.state);
           setClockOffsetMs(msg.state.serverTime - Date.now());
 
           const me = msg.state.participants.find((p) => p.clientId === msg.clientId);
-          const session: SavedSession = {
+          const hint: RoomSessionHint = {
             roomCode: msg.roomCode,
             clientId: msg.clientId,
             sessionToken: msg.sessionToken,
             clientName: me?.name || activeSessionRef.current?.clientName || 'Manager',
           };
-          activeSessionRef.current = session;
-          saveSession(session);
-
-          const url = new URL(window.location.href);
-          if (url.searchParams.get('room') !== msg.roomCode) {
-            url.searchParams.set('room', msg.roomCode);
-            window.history.replaceState({}, '', url.toString());
-          }
+          activeSessionRef.current = hint;
+          saveRoomSession(hint);
+          onRoomJoinedRef.current?.(msg.state);
           return;
         }
 
@@ -208,12 +229,11 @@ export function useAuctionSocket() {
           pushToast('error', msg.message);
           if (msg.code === 'ROOM_NOT_FOUND' || msg.code === 'ROOM_EXPIRED') {
             activeSessionRef.current = null;
-            saveSession(null);
+            saveRoomSession(null);
             setRoomState(null);
+            setClientId('');
+            setSessionToken('');
             setStatus('idle');
-            const url = new URL(window.location.href);
-            url.searchParams.delete('room');
-            window.history.replaceState({}, '', url.toString());
           }
         }
       };
@@ -247,18 +267,28 @@ export function useAuctionSocket() {
     [clearTimers, pushToast],
   );
 
-  // Restore active session on mount if user refreshed page
+  // Restore active room if URL is /room/:code or sessionStorage has an active room session
   useEffect(() => {
-    const saved = loadSavedSession();
-    const urlRoom = new URLSearchParams(window.location.search).get('room')?.trim().toUpperCase();
-    if (saved && (!urlRoom || saved.roomCode === urlRoom)) {
-      activeSessionRef.current = saved;
+    const pathMatch = window.location.pathname.match(/^\/room\/([A-Za-z0-9]{4,10})(?:\/(?:winner|results))?$/i);
+    const pathCode = pathMatch ? pathMatch[1].toUpperCase() : null;
+    const saved = loadRoomSession();
+    const targetCode = pathCode || saved?.roomCode || null;
+
+    if (targetCode) {
+      const sameRoom = saved && saved.roomCode === targetCode;
+      const hint: RoomSessionHint = {
+        roomCode: targetCode,
+        clientId: sameRoom ? saved.clientId : '',
+        sessionToken: sameRoom ? saved.sessionToken : '',
+        clientName: sameRoom ? saved.clientName : 'Manager',
+      };
+      activeSessionRef.current = hint;
       connectSocket({
         type: 'room:join',
-        roomCode: saved.roomCode,
-        clientId: saved.clientId,
-        clientName: saved.clientName,
-        sessionToken: saved.sessionToken,
+        roomCode: hint.roomCode,
+        clientId: hint.clientId,
+        sessionToken: hint.sessionToken,
+        clientName: hint.clientName,
       });
     }
 
@@ -284,15 +314,15 @@ export function useAuctionSocket() {
 
   const createRoom = useCallback(
     (clientName: string, config: AuctionConfig, customTeams?: Partial<Team>[]) => {
-      const cid = makeClientId();
-      setClientId(cid);
       setRoomState(null);
+      setClientId('');
+      setSessionToken('');
       activeSessionRef.current = null;
-      saveSession(null);
+      saveRoomSession(null);
       connectSocket({
         type: 'room:create',
-        clientId: cid,
-        clientName,
+        clientId: '',
+        clientName: clientName.trim() || 'Auctioneer',
         config,
         customTeams,
       });
@@ -304,43 +334,35 @@ export function useAuctionSocket() {
     (roomCode: string, clientName: string) => {
       const code = roomCode.trim().toUpperCase();
       if (!code) {
-        pushToast('error', 'Enter a valid 6-character room code.');
+        pushToast('error', 'Enter a valid room code.');
         return;
       }
-      const saved = activeSessionRef.current;
-      const matchingSaved = saved && saved.roomCode === code ? saved : null;
-      if (!matchingSaved) {
-        activeSessionRef.current = null;
-        saveSession(null);
-        setRoomState(null);
-      }
-      const cid = matchingSaved?.clientId || makeClientId();
-      setClientId(cid);
+      const cleanName = clientName.trim() || 'Manager';
+      const saved = loadRoomSession();
+      const sameRoom = saved && saved.roomCode === code;
+      const hint: RoomSessionHint = {
+        roomCode: code,
+        clientId: sameRoom ? saved.clientId : '',
+        sessionToken: sameRoom ? saved.sessionToken : '',
+        clientName: cleanName,
+      };
+      activeSessionRef.current = hint;
+      saveRoomSession(hint);
+      setRoomState(null);
       connectSocket({
         type: 'room:join',
         roomCode: code,
-        clientId: cid,
-        clientName: clientName.trim() || 'Manager',
-        sessionToken: matchingSaved?.sessionToken,
+        clientId: hint.clientId,
+        sessionToken: hint.sessionToken,
+        clientName: cleanName,
       });
     },
     [connectSocket, pushToast],
   );
 
   const leaveRoom = useCallback(() => {
-    intentionalCloseRef.current = true;
-    clearTimers();
-    wsRef.current?.close();
-    wsRef.current = null;
-    activeSessionRef.current = null;
-    saveSession(null);
-    setRoomState(null);
-    setStatus('idle');
-    setConnectionError(null);
-    const url = new URL(window.location.href);
-    url.searchParams.delete('room');
-    window.history.replaceState({}, '', url.toString());
-  }, [clearTimers]);
+    resetRoomState();
+  }, [resetRoomState]);
 
   const manualReconnect = useCallback(() => {
     reconnectAttemptRef.current = 0;
@@ -351,6 +373,7 @@ export function useAuctionSocket() {
     status,
     roomState,
     clientId,
+    sessionToken,
     clockOffsetMs,
     toasts,
     connectionError,

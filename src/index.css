@@ -6,12 +6,17 @@
     --font-display: 'Barlow Condensed', system-ui, sans-serif;
     --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --ra-bg: #131B2B;
+    --ra-surface: #2F4A63;
+    --ra-surface-deep: #1B293D;
+    --ra-accent: #5B91A3;
+    --ra-mint: #CFEAE0;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #090D16;
-    color: #F1F5F9;
+    background-color: #131B2B;
+    color: #CFEAE0;
   }
 }
 
@@ -55,12 +60,12 @@
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 22, 36, 0.6);
+  background: rgba(19, 27, 43, 0.75);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.25);
+  background: rgba(91, 145, 163, 0.45);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.45);
+  background: rgba(207, 234, 224, 0.55);
 }

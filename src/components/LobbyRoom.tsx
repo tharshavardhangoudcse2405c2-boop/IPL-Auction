@@ -48,24 +48,29 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
     setEditingName('');
   };
 
-  const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${state.roomCode}`;
+  const inviteUrl = `${window.location.origin}/join?room=${state.roomCode}`;
 
   return (
     <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       {/* Room Header Card */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-2xl border border-white/10 bg-[#111827] p-6">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-6 shadow-xl">
         <div className="space-y-1.5">
-          <div className="text-xs font-medium text-amber-400 uppercase tracking-wider">
-            Pre-Auction Lobby · {isOnline ? 'Online Multiplayer' : state.config.mode === 'local' ? 'Shared-Screen Local' : 'Solo vs. AI Bots'}
+          <div className="text-xs font-bold text-[#CFEAE0]/85 uppercase tracking-wider">
+            Pre-Auction Lobby ·{' '}
+            {isOnline
+              ? 'Online Multiplayer'
+              : state.config.mode === 'local'
+                ? 'Shared-Screen Local'
+                : 'Solo vs. AI Bots'}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-3xl font-extrabold text-white">
-              Room <span className="font-mono-num text-amber-400 tracking-widest">{state.roomCode}</span>
+            <h1 className="font-display text-3xl font-extrabold text-[#CFEAE0]">
+              Room <span className="font-mono-num text-white tracking-widest">{state.roomCode}</span>
             </h1>
             <button
               type="button"
               onClick={() => copyText(state.roomCode, 'code')}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5B91A3]/50 bg-[#131B2B] px-3 py-1.5 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
             >
               {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
               {copiedCode ? 'Copied Code' : 'Copy Code'}
@@ -73,14 +78,16 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
             <button
               type="button"
               onClick={() => copyText(inviteUrl, 'link')}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5B91A3]/50 bg-[#131B2B] px-3 py-1.5 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
             >
               {copiedLink ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Link2 className="h-3.5 w-3.5" />}
               {copiedLink ? 'Copied Link' : 'Copy Invite Link'}
             </button>
           </div>
-          <p className="text-sm text-slate-400">
-            {state.playerQueue.length} players queued · {formatLakhs(state.config.startingPurse)} purse · {state.config.minSquadSize}–{state.config.maxSquadSize} squad · Max {state.config.maxOverseas} overseas · {state.config.timerSeconds}s clock
+          <p className="text-sm text-[#CFEAE0]/80">
+            {state.playerQueue.length} players queued · {formatLakhs(state.config.startingPurse)} purse ·{' '}
+            {state.config.minSquadSize}–{state.config.maxSquadSize} squad · Max {state.config.maxOverseas} overseas ·{' '}
+            {state.config.timerSeconds}s clock
           </p>
         </div>
 
@@ -89,10 +96,10 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
             <button
               type="button"
               onClick={() => onSend({ type: 'room:toggle_ready', ready: !me.isReady })}
-              className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors whitespace-nowrap shrink-0 ${
                 me.isReady
-                  ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
-                  : 'border-white/20 bg-white/5 text-white hover:bg-white/10'
+                  ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200'
+                  : 'border-[#5B91A3]/50 bg-[#131B2B] text-[#CFEAE0] hover:bg-[#1B293D]'
               }`}
             >
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -102,7 +109,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
           <button
             type="button"
             onClick={onLeave}
-            className="rounded-lg border border-white/15 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5 whitespace-nowrap shrink-0"
+            className="rounded-xl border border-[#CFEAE0]/25 bg-[#131B2B]/60 px-4 py-2.5 text-sm font-semibold text-[#CFEAE0]/85 hover:bg-[#131B2B] whitespace-nowrap shrink-0"
           >
             Leave Room
           </button>
@@ -110,7 +117,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
             <button
               type="button"
               onClick={() => onSend({ type: 'auction:start' })}
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#5B91A3] px-5 py-2.5 text-sm font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap shrink-0"
             >
               <Play className="h-4 w-4 fill-current" aria-hidden="true" />
               Start Live Auction
@@ -121,13 +128,13 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
 
       {/* Main Grid: Franchises + Participants & Rules */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 rounded-2xl border border-white/10 bg-[#111827] p-6 space-y-4">
+        <div className="lg:col-span-8 rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-6 space-y-4 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-display text-xl font-bold text-white">
+              <h2 className="font-display text-xl font-bold text-[#CFEAE0]">
                 Franchise Seats ({state.teams.length})
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[#CFEAE0]/80 mt-0.5">
                 {isOnline
                   ? 'Each online manager claims one franchise. Unclaimed open seats will not bid unless assigned to AI bots.'
                   : state.config.mode === 'local'
@@ -139,7 +146,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
               <button
                 type="button"
                 onClick={() => onSend({ type: 'room:fill_bots' })}
-                className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 whitespace-nowrap"
+                className="rounded-xl bg-[#5B91A3] px-3.5 py-2 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap"
               >
                 Fill Open Seats with AI Bots
               </button>
@@ -149,7 +156,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
           {needsClaimInOnline && (
             <div
               role="status"
-              className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100"
+              className="rounded-xl border border-[#CFEAE0]/45 bg-[#131B2B] px-4 py-3 text-xs text-[#CFEAE0]"
             >
               You have not claimed a franchise yet. Click <strong>Claim</strong> on any open human seat below to bid once the auction begins.
             </div>
@@ -167,8 +174,8 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                   key={team.id}
                   className={`flex items-center justify-between gap-3 rounded-xl border p-3.5 ${
                     isMine
-                      ? 'border-amber-400/60 bg-amber-500/10'
-                      : 'border-white/10 bg-[#090D16]'
+                      ? 'border-[#CFEAE0] bg-[#131B2B]'
+                      : 'border-[#5B91A3]/30 bg-[#131B2B]/80'
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -189,12 +196,12 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                             onChange={(e) => setEditingName(e.target.value)}
                             onBlur={() => commitRename(team.id)}
                             autoFocus
-                            className="w-full rounded border border-amber-400/50 bg-[#111827] px-2 py-1 text-xs font-semibold text-white focus:outline-none"
+                            className="w-full rounded border border-[#5B91A3] bg-[#2F4A63] px-2 py-1 text-xs font-semibold text-[#CFEAE0] focus:outline-none"
                           />
                         </form>
                       ) : (
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="truncate text-sm font-semibold text-white">{team.name}</span>
+                          <span className="truncate text-sm font-bold text-[#CFEAE0]">{team.name}</span>
                           {canEditName && (
                             <button
                               type="button"
@@ -202,14 +209,14 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                                 setEditingTeamId(team.id);
                                 setEditingName(team.name);
                               }}
-                              className="text-[11px] text-slate-400 hover:text-amber-300 shrink-0"
+                              className="text-[11px] text-[#5B91A3] hover:text-[#CFEAE0] shrink-0"
                             >
                               Rename
                             </button>
                           )}
                         </div>
                       )}
-                      <div className="text-xs text-slate-400 truncate">
+                      <div className="text-xs text-[#CFEAE0]/70 truncate">
                         {team.controlType === 'bot'
                           ? `AI Manager · ${state.config.botDifficulty}`
                           : team.ownerName
@@ -224,7 +231,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                       <button
                         type="button"
                         onClick={() => onSend({ type: 'room:claim_team', teamId: null })}
-                        className="rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 whitespace-nowrap"
+                        className="rounded-lg border border-[#5B91A3]/55 bg-[#2F4A63] px-3 py-1.5 text-xs font-bold text-[#CFEAE0] hover:bg-[#5B91A3] hover:text-[#131B2B] whitespace-nowrap"
                       >
                         Release
                       </button>
@@ -233,7 +240,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                       <button
                         type="button"
                         onClick={() => onSend({ type: 'room:claim_team', teamId: team.id })}
-                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 whitespace-nowrap"
+                        className="rounded-lg bg-[#5B91A3] px-3 py-1.5 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap"
                       >
                         Claim
                       </button>
@@ -248,7 +255,7 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
                             controlType: team.controlType === 'bot' ? 'human' : 'bot',
                           })
                         }
-                        className="rounded-md border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 whitespace-nowrap"
+                        className="rounded-lg border border-[#5B91A3]/35 bg-[#2F4A63]/65 px-2.5 py-1.5 text-xs font-semibold text-[#CFEAE0] hover:bg-[#2F4A63] whitespace-nowrap"
                       >
                         {team.controlType === 'bot' ? 'Make Human' : 'Set AI Bot'}
                       </button>
@@ -261,26 +268,26 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
         </div>
 
         <div className="lg:col-span-4 space-y-5">
-          <div className="rounded-2xl border border-white/10 bg-[#111827] p-5 space-y-3">
+          <div className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-5 space-y-3 shadow-xl">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg font-bold text-white">Connected Managers</h2>
-              <Users className="h-4 w-4 text-slate-400" aria-hidden="true" />
+              <h2 className="font-display text-lg font-bold text-[#CFEAE0]">Connected Managers</h2>
+              <Users className="h-4 w-4 text-[#CFEAE0]/75" aria-hidden="true" />
             </div>
-            <ul className="divide-y divide-white/10 text-sm">
+            <ul className="divide-y divide-[#5B91A3]/25 text-sm">
               {state.participants.map((p) => {
                 const ownedTeam = state.teams.find((t) => t.id === p.teamId);
                 return (
                   <li key={p.clientId} className="flex items-center justify-between py-2.5">
                     <div className="min-w-0">
-                      <div className="font-medium text-white truncate">
+                      <div className="font-semibold text-[#CFEAE0] truncate">
                         {p.name} {p.clientId === clientId ? '(You)' : ''}
                       </div>
-                      <div className="text-xs text-slate-400">
+                      <div className="text-xs text-[#CFEAE0]/70">
                         {p.isHost ? 'Host & Auctioneer' : 'Franchise Manager'}
                         {ownedTeam ? ` · ${ownedTeam.shortCode}` : ''}
                       </div>
                     </div>
-                    <span className={`text-xs font-medium ${p.connected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <span className={`text-xs font-bold ${p.connected ? 'text-emerald-300' : 'text-amber-300'}`}>
                       {p.connected ? (p.isReady || p.isHost ? 'Ready' : 'In Lobby') : 'Reconnecting'}
                     </span>
                   </li>
@@ -289,29 +296,29 @@ export function LobbyRoom({ state, clientId, onSend, onLeave }: LobbyRoomProps) 
             </ul>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[#111827] p-5 space-y-2.5 text-xs text-slate-300">
-            <div className="font-display text-lg font-bold text-white">Active Auction Rules</div>
-            <div className="flex justify-between py-1 border-b border-white/10">
-              <span className="text-slate-400">Starting Purse</span>
-              <span className="font-mono-num text-white">{formatLakhs(state.config.startingPurse)}</span>
+          <div className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-5 space-y-2.5 text-xs text-[#CFEAE0]/85 shadow-xl">
+            <div className="font-display text-lg font-bold text-[#CFEAE0]">Active Auction Rules</div>
+            <div className="flex justify-between py-1 border-b border-[#5B91A3]/25">
+              <span className="text-[#CFEAE0]/70">Starting Purse</span>
+              <span className="font-mono-num font-bold text-[#CFEAE0]">{formatLakhs(state.config.startingPurse)}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-white/10">
-              <span className="text-slate-400">Squad Size</span>
-              <span className="font-mono-num text-white">{state.config.minSquadSize}–{state.config.maxSquadSize} players</span>
+            <div className="flex justify-between py-1 border-b border-[#5B91A3]/25">
+              <span className="text-[#CFEAE0]/70">Squad Size</span>
+              <span className="font-mono-num font-bold text-[#CFEAE0]">{state.config.minSquadSize}–{state.config.maxSquadSize} players</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-white/10">
-              <span className="text-slate-400">Overseas Limit</span>
-              <span className="font-mono-num text-white">Max {state.config.maxOverseas}</span>
+            <div className="flex justify-between py-1 border-b border-[#5B91A3]/25">
+              <span className="text-[#CFEAE0]/70">Overseas Limit</span>
+              <span className="font-mono-num font-bold text-[#CFEAE0]">Max {state.config.maxOverseas}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-white/10">
-              <span className="text-slate-400">Role Targets (Min)</span>
-              <span className="font-mono-num text-white">
+            <div className="flex justify-between py-1 border-b border-[#5B91A3]/25">
+              <span className="text-[#CFEAE0]/70">Role Targets (Min)</span>
+              <span className="font-mono-num font-bold text-[#CFEAE0]">
                 {state.config.roleRequirements.Batter} BAT · {state.config.roleRequirements.Bowler} BWL · {state.config.roleRequirements['All-Rounder']} AR · {state.config.roleRequirements.Wicketkeeper} WK
               </span>
             </div>
             <div className="flex justify-between py-1">
-              <span className="text-slate-400">Lot Clock / Anti-Snipe</span>
-              <span className="font-mono-num text-white">{state.config.timerSeconds}s / +{state.config.antiSnipeSeconds}s</span>
+              <span className="text-[#CFEAE0]/70">Lot Clock / Anti-Snipe</span>
+              <span className="font-mono-num font-bold text-[#CFEAE0]">{state.config.timerSeconds}s / +{state.config.antiSnipeSeconds}s</span>
             </div>
           </div>
         </div>

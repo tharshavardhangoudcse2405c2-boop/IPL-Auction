@@ -43,7 +43,7 @@ export function makeServerClientId(): string {
   return `cli-${crypto.randomBytes(8).toString('hex')}`;
 }
 
-function timingSafeTokenEquals(a: string, b: string): boolean {
+export function timingSafeTokenEquals(a: string, b: string): boolean {
   const bufA = Buffer.from(a, 'utf8');
   const bufB = Buffer.from(b, 'utf8');
   if (bufA.length !== bufB.length) return false;
@@ -92,10 +92,6 @@ export function createTeamsFromConfig(
         ? custom.controlType
         : defaultControl;
 
-    // Ownership assignment:
-    // - online: host claims first human seat (Team 1 if human); all other human seats start unclaimed
-    // - solo: host owns only the single human seat (first human team)
-    // - local: host/operator owns all human-controlled teams on the shared screen
     let ownerClientId: string | null = null;
     let ownerName: string | null = null;
 
@@ -111,7 +107,6 @@ export function createTeamsFromConfig(
         ownerClientId = hostClientId;
         ownerName = hostName;
       } else {
-        // Solo mode strictly permits 1 human franchise; extra slots become bots
         teams.push({
           id: `team-${i + 1}`,
           name: custom?.name?.trim() || tpl.name,
@@ -240,6 +235,7 @@ export function createRoomRuntime(
     currentLot: null,
     lastOutcome: null,
     eventLog: [],
+    winnerAnalysis: null,
     serverTime: now,
     createdAt: now,
   };
@@ -270,34 +266,27 @@ export function joinRoom(
   const state = runtime.state;
   const now = Date.now();
 
-  if (
-    typeof incomingClientId === 'string' &&
-    incomingClientId.length > 0 &&
-    typeof incomingToken === 'string' &&
-    incomingToken.length > 0
-  ) {
+  if (incomingClientId && incomingToken) {
+    const expectedToken = runtime.sessionTokens.get(incomingClientId);
     const existing = state.participants.find((p) => p.clientId === incomingClientId);
-    const storedToken = runtime.sessionTokens.get(incomingClientId);
-    if (existing && storedToken && timingSafeTokenEquals(storedToken, incomingToken)) {
+    if (existing && expectedToken && timingSafeTokenEquals(incomingToken, expectedToken)) {
       existing.connected = true;
       if (clientName.trim()) {
         existing.name = clientName.trim().slice(0, 32);
-        // Keep owned team's ownerName in sync
-        for (const t of state.teams) {
-          if (t.ownerClientId === existing.clientId) {
-            t.ownerName = existing.name;
-          }
+      }
+      for (const t of state.teams) {
+        if (t.ownerClientId === existing.clientId) {
+          t.ownerName = existing.name;
         }
       }
       pushEvent(state, {
         type: 'info',
         message: `${existing.name} reconnected to the room.`,
       });
-      return { sessionToken: storedToken, participant: existing, reconnected: true };
+      return { sessionToken: expectedToken, participant: existing, reconnected: true };
     }
   }
 
-  // Always allocate a brand-new server-issued clientId & sessionToken for new/unverified joins
   const safeClientId = makeServerClientId();
   const sessionToken = crypto.randomBytes(24).toString('hex');
   runtime.sessionTokens.set(safeClientId, sessionToken);
@@ -448,7 +437,6 @@ export function claimTeam(runtime: RoomRuntime, clientId: string, teamId: string
     return 'Team claiming is only used in online multiplayer lobbies.';
   }
 
-  // Release any franchise currently owned by this participant first
   for (const t of state.teams) {
     if (t.ownerClientId === clientId) {
       t.ownerClientId = null;
@@ -471,7 +459,6 @@ export function claimTeam(runtime: RoomRuntime, clientId: string, teamId: string
   if (target.ownerClientId && target.ownerClientId !== clientId) {
     return 'Franchise already claimed by another participant.';
   }
-  // Extra defensive check ensuring no other participant points to target.id
   const duplicateHolder = state.participants.find((p) => p.clientId !== clientId && p.teamId === target.id);
   if (duplicateHolder) {
     return 'Franchise already claimed by another participant.';
@@ -1140,6 +1127,7 @@ export function rematchRoom(runtime: RoomRuntime, clientId: string, keepSettings
   state.soldHistory = [];
   state.currentLot = null;
   state.lastOutcome = null;
+  state.winnerAnalysis = null;
   state.eventLog = [];
 
   if (keepSettings) {

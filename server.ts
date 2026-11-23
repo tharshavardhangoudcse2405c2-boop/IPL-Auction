@@ -1,9 +1,12 @@
+import 'dotenv/config';
 import express from 'express';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { generateAuctionWinnerAnalysis } from './src/server/aiAnalysis.ts';
+import { VERIFIED_PHOTO_URLS } from './src/server/verifiedPhotos.ts';
 import {
   claimTeam,
   createRoomRuntime,
@@ -21,6 +24,7 @@ import {
   resumeAuction,
   startAuction,
   tickRoom,
+  timingSafeTokenEquals,
   toggleParticipantReady,
   undoLastBid,
   updateLobbyConfig,
@@ -50,6 +54,33 @@ interface CachedPhoto {
 const rooms = new Map<string, RoomRuntime>();
 const socketMetas = new Map<WebSocket, SocketMeta>();
 const photoCache = new Map<string, CachedPhoto>();
+const photoInFlight = new Map<string, Promise<CachedPhoto | null>>();
+const analysisInFlight = new Map<string, Promise<Awaited<ReturnType<typeof generateAuctionWinnerAnalysis>>>>();
+
+const WIKI_USER_AGENT = 'RealAuction26Bot/1.0 (https://realauction26.local; admin@realauction26.local)';
+const MAX_CONCURRENT_PHOTO_FETCHES = 8;
+let activePhotoFetches = 0;
+const photoFetchQueue: Array<() => void> = [];
+
+function runWithWikiSlot<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const start = () => {
+      activePhotoFetches += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activePhotoFetches -= 1;
+          const next = photoFetchQueue.shift();
+          if (next) next();
+        });
+    };
+    if (activePhotoFetches < MAX_CONCURRENT_PHOTO_FETCHES) {
+      start();
+    } else {
+      photoFetchQueue.push(start);
+    }
+  });
+}
 
 const LOCAL_FALLBACK_PORTRAITS: Record<PlayerRole, string> = {
   Batter: 'player_portrait_batter_1795289107133.jpg',
@@ -58,69 +89,24 @@ const LOCAL_FALLBACK_PORTRAITS: Record<PlayerRole, string> = {
   Wicketkeeper: 'player_portrait_keeper_1795289106537.jpg',
 };
 
-function isAllowedWikiImageUrl(rawUrl: string): boolean {
+function isAllowedPlayerPhotoUrl(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);
     if (u.protocol !== 'https:') return false;
     return (
       u.hostname === 'upload.wikimedia.org' ||
       u.hostname === 'thumb.wikimedia.org' ||
-      u.hostname.endsWith('.wikimedia.org')
+      u.hostname.endsWith('.wikimedia.org') ||
+      (u.hostname === 'www.iplt20.com' && u.pathname.startsWith('/api/team-assets')) ||
+      u.hostname === 'static.cricbuzz.com'
     );
   } catch {
     return false;
   }
 }
 
-async function resolvePlayerPhoto(playerId: string): Promise<CachedPhoto | null> {
-  const cached = photoCache.get(playerId);
-  if (cached) return cached;
-
-  const player = REAL_PLAYER_POOL.find((p) => p.id === playerId);
-  if (!player) return null;
-
-  if (player.wikiSlug) {
-    try {
-      const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(player.wikiSlug)}`;
-      const summaryRes = await fetch(summaryUrl, {
-        headers: { 'User-Agent': 'CreaseHammerAuction/1.0 (https://creasehammer.local)' },
-        signal: AbortSignal.timeout(4500),
-      });
-      if (summaryRes.ok) {
-        const data = (await summaryRes.json()) as {
-          thumbnail?: { source?: string };
-          originalimage?: { source?: string };
-        };
-        const imgUrl = data.thumbnail?.source || data.originalimage?.source;
-        if (imgUrl && isAllowedWikiImageUrl(imgUrl)) {
-          const imgRes = await fetch(imgUrl, {
-            headers: { 'User-Agent': 'CreaseHammerAuction/1.0' },
-            signal: AbortSignal.timeout(4500),
-          });
-          if (imgRes.ok) {
-            const ct = imgRes.headers.get('content-type') || 'image/jpeg';
-            if (ct.startsWith('image/')) {
-              const arrayBuf = await imgRes.arrayBuffer();
-              const entry: CachedPhoto = {
-                buffer: Buffer.from(arrayBuf),
-                contentType: ct,
-              };
-              if (photoCache.size > 150) {
-                const firstKey = photoCache.keys().next().value;
-                if (firstKey) photoCache.delete(firstKey);
-              }
-              photoCache.set(playerId, entry);
-              return entry;
-            }
-          }
-        }
-      }
-    } catch {
-      // Fall through to bundled local portrait
-    }
-  }
-
-  const filename = LOCAL_FALLBACK_PORTRAITS[player.role] || 'player_portrait_batter_1795289107133.jpg';
+async function readLocalFallbackPortrait(role: PlayerRole): Promise<CachedPhoto | null> {
+  const filename = LOCAL_FALLBACK_PORTRAITS[role] || 'player_portrait_batter_1795289107133.jpg';
   const candidateDirs = [
     path.resolve(__dirname, 'src/assets/images'),
     path.resolve(__dirname, 'dist/src/assets/images'),
@@ -130,15 +116,66 @@ async function resolvePlayerPhoto(playerId: string): Promise<CachedPhoto | null>
       const resolved = path.resolve(imagesDir, filename);
       if (resolved.startsWith(imagesDir + path.sep)) {
         const buffer = await fs.readFile(resolved);
-        const entry = { buffer, contentType: 'image/jpeg' };
-        photoCache.set(playerId, entry);
-        return entry;
+        return { buffer, contentType: 'image/jpeg' };
       }
     } catch {
       // Try next directory
     }
   }
   return null;
+}
+
+async function resolvePlayerPhoto(playerId: string): Promise<CachedPhoto | null> {
+  const cached = photoCache.get(playerId);
+  if (cached) return cached;
+
+  const existingPromise = photoInFlight.get(playerId);
+  if (existingPromise) return existingPromise;
+
+  const player = REAL_PLAYER_POOL.find((p) => p.id === playerId);
+  if (!player) return null;
+
+  const task = (async (): Promise<CachedPhoto | null> => {
+    const verifiedUrl = VERIFIED_PHOTO_URLS[playerId];
+    if (verifiedUrl && isAllowedPlayerPhotoUrl(verifiedUrl)) {
+      try {
+        const entry = await runWithWikiSlot(async (): Promise<CachedPhoto | null> => {
+          const imgRes = await fetch(verifiedUrl, {
+            headers: {
+              'User-Agent': WIKI_USER_AGENT,
+              Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8',
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!imgRes.ok) return null;
+          const ct = imgRes.headers.get('content-type') || 'image/jpeg';
+          if (!ct.startsWith('image/')) return null;
+          const arrayBuf = await imgRes.arrayBuffer();
+          return {
+            buffer: Buffer.from(arrayBuf),
+            contentType: ct,
+          };
+        });
+        if (entry) {
+          if (photoCache.size > 350) {
+            const firstKey = photoCache.keys().next().value;
+            if (firstKey) photoCache.delete(firstKey);
+          }
+          photoCache.set(playerId, entry);
+          return entry;
+        }
+      } catch {
+        // Fall through to temporary local portrait without poisoning photoCache
+      }
+    }
+
+    return readLocalFallbackPortrait(player.role);
+  })().finally(() => {
+    photoInFlight.delete(playerId);
+  });
+
+  photoInFlight.set(playerId, task);
+  return task;
 }
 
 function sendToSocket(ws: WebSocket, msg: ServerMessage): void {
@@ -200,9 +237,12 @@ async function startServer(): Promise<void> {
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/api/health', (_req, res) => {
+    const geminiKey = process.env.GEMINI_API_KEY?.trim();
     res.json({
       ok: true,
+      app: 'Real Auction 26',
       activeRooms: rooms.size,
+      geminiConfigured: Boolean(geminiKey && geminiKey !== 'MY_GEMINI_API_KEY'),
       pool: getFullPlayerPoolSummary(),
       serverTime: Date.now(),
     });
@@ -223,6 +263,71 @@ async function startServer(): Promise<void> {
       teamCount: runtime.state.teams.length,
       participantsCount: runtime.state.participants.filter((p) => p.connected).length,
     });
+  });
+
+  app.post('/api/rooms/:code/ai-analysis', async (req, res) => {
+    const code = String(req.params.code || '').trim().toUpperCase();
+    const runtime = rooms.get(code);
+    if (!runtime) {
+      res.status(404).json({ ok: false, code: 'ROOM_NOT_FOUND', message: 'Auction room not found or expired.' });
+      return;
+    }
+
+    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+    const clientId = String(body.clientId || req.headers['x-room-client-id'] || '').trim();
+    const sessionToken = String(body.sessionToken || req.headers['x-room-session-token'] || '').trim();
+    const expectedToken = clientId ? runtime.sessionTokens.get(clientId) : undefined;
+    const isParticipant = Boolean(
+      clientId &&
+        expectedToken &&
+        sessionToken &&
+        timingSafeTokenEquals(sessionToken, expectedToken) &&
+        runtime.state.participants.some((p) => p.clientId === clientId),
+    );
+    if (!isParticipant) {
+      res.status(403).json({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Only participants in this auction room can request AI squad analysis.',
+      });
+      return;
+    }
+
+    if (runtime.state.phase !== 'COMPLETED') {
+      res.status(400).json({
+        ok: false,
+        code: 'AUCTION_NOT_COMPLETED',
+        message: 'AI winner analysis is only available once the auction concludes.',
+      });
+      return;
+    }
+
+    if (runtime.state.winnerAnalysis) {
+      res.json({ ok: true, analysis: runtime.state.winnerAnalysis });
+      return;
+    }
+
+    let pending = analysisInFlight.get(code);
+    if (!pending) {
+      pending = generateAuctionWinnerAnalysis(runtime.state).finally(() => {
+        analysisInFlight.delete(code);
+      });
+      analysisInFlight.set(code, pending);
+    }
+
+    const result = await pending;
+    if (!result.ok) {
+      res.status(result.status).json({
+        ok: false,
+        code: result.code,
+        message: result.message,
+      });
+      return;
+    }
+
+    runtime.state.winnerAnalysis = result.analysis;
+    broadcastRoomState(code);
+    res.json({ ok: true, analysis: result.analysis });
   });
 
   app.get('/api/player-photo/:id', async (req, res) => {
@@ -267,7 +372,8 @@ async function startServer(): Promise<void> {
         sendToSocket(ws, {
           type: 'pong',
           serverTime: Date.now(),
-          clientSentAt: typeof msg.clientSentAt === 'number' && Number.isFinite(msg.clientSentAt) ? msg.clientSentAt : undefined,
+          clientSentAt:
+            typeof msg.clientSentAt === 'number' && Number.isFinite(msg.clientSentAt) ? msg.clientSentAt : undefined,
         });
         return;
       }
@@ -417,9 +523,10 @@ async function startServer(): Promise<void> {
         }
         case 'auction:bid': {
           const teamId = typeof msg.teamId === 'string' ? msg.teamId : '';
-          const expectedAmount = typeof msg.expectedAmount === 'number' && Number.isFinite(msg.expectedAmount)
-            ? msg.expectedAmount
-            : -1;
+          const expectedAmount =
+            typeof msg.expectedAmount === 'number' && Number.isFinite(msg.expectedAmount)
+              ? msg.expectedAmount
+              : -1;
 
           const result = handlePlaceBid(runtime, teamId, expectedAmount, clientId, false);
           if (!result.ok) {
@@ -552,6 +659,10 @@ async function startServer(): Promise<void> {
     }
   }, 250);
 
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
   if (!isProduction) {
     const vite = await import('vite');
     const viteServer = await vite.createServer({
@@ -561,9 +672,6 @@ async function startServer(): Promise<void> {
     app.use(viteServer.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');
-    app.use('/api', (_req, res) => {
-      res.status(404).json({ error: 'API endpoint not found.' });
-    });
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
@@ -571,7 +679,7 @@ async function startServer(): Promise<void> {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`CreaseHammer auction server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Real Auction 26 server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

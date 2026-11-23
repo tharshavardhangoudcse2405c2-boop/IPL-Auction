@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Copy, Download, RotateCcw, Settings2, Trophy } from 'lucide-react';
+import { Check, Copy, Download, RotateCcw, Settings2, Sparkles, Trophy } from 'lucide-react';
 import {
   formatLakhs,
   formatLakhsCompact,
@@ -15,9 +15,16 @@ interface ResultsSummaryProps {
   clientId: string;
   onSend: (msg: ClientMessage) => void;
   onLeave: () => void;
+  onViewWinner: () => void;
 }
 
-export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSummaryProps) {
+export function ResultsSummary({
+  state,
+  clientId,
+  onSend,
+  onLeave,
+  onViewWinner,
+}: ResultsSummaryProps) {
   const [copiedSummary, setCopiedSummary] = useState(false);
 
   const me = state.participants.find((p) => p.clientId === clientId);
@@ -59,14 +66,16 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
         ]);
       }
     }
-    downloadBlob(rows.map((r) => r.join(',')).join('\n'), `creasehammer-auction-${state.roomCode}.csv`, 'text/csv;charset=utf-8;');
+    downloadBlob(rows.map((r) => r.join(',')).join('\n'), `real-auction-26-${state.roomCode}.csv`, 'text/csv;charset=utf-8;');
   };
 
   const handleExportJson = () => {
     const payload = {
+      app: 'Real Auction 26',
       roomCode: state.roomCode,
       exportedAt: new Date().toISOString(),
       config: state.config,
+      winnerAnalysis: state.winnerAnalysis,
       teams: state.teams.map((t) => ({
         name: t.name,
         shortCode: t.shortCode,
@@ -85,15 +94,16 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
       })),
       unsoldPlayers: state.unsoldPool.map((p) => p.name),
     };
-    downloadBlob(JSON.stringify(payload, null, 2), `creasehammer-auction-${state.roomCode}.json`, 'application/json');
+    downloadBlob(JSON.stringify(payload, null, 2), `real-auction-26-${state.roomCode}.json`, 'application/json');
   };
 
   const handleCopySummary = async () => {
     const lines: string[] = [
-      `CreaseHammer Cricket Auction Results (Room ${state.roomCode})`,
+      `Real Auction 26 Results (Room ${state.roomCode})`,
       `Sold: ${state.soldHistory.length} | Unsold: ${state.unsoldPool.length}`,
+      state.winnerAnalysis ? `AI Best-Built Squad: ${state.winnerAnalysis.winnerTeamName}` : '',
       '',
-    ];
+    ].filter((l) => l !== '');
     for (const t of state.teams) {
       const roles = getTeamRoleCounts(t);
       lines.push(
@@ -116,16 +126,16 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
   return (
     <div className="mx-auto max-w-[1360px] px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       {/* Results Hero Banner */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 rounded-2xl border border-white/10 bg-[#111827] p-6 sm:p-8">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-6 sm:p-8 shadow-xl">
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold tracking-wider text-amber-400 uppercase">
-            <Trophy className="h-4 w-4" aria-hidden="true" />
+          <div className="inline-flex items-center gap-2 text-xs font-bold tracking-wider text-[#CFEAE0]/85 uppercase">
+            <Trophy className="h-4 w-4 text-[#CFEAE0]" aria-hidden="true" />
             Auction Concluded · Room {state.roomCode}
           </div>
-          <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-white">
+          <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-[#CFEAE0]">
             Final Franchise Squads & Purse Ledger
           </h1>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-[#CFEAE0]/80">
             {state.soldHistory.length} players sold across {state.teams.length} franchises · {state.unsoldPool.length} unsold
           </p>
         </div>
@@ -133,16 +143,24 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
+            onClick={onViewWinner}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#5B91A3] px-4 py-2 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap"
+          >
+            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            AI Winner Analysis
+          </button>
+          <button
+            type="button"
             onClick={handleCopySummary}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-xs font-semibold text-white hover:bg-white/10 whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
           >
             {copiedSummary ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-            {copiedSummary ? 'Copied Summary' : 'Copy Shareable Text'}
+            {copiedSummary ? 'Copied Summary' : 'Copy Summary'}
           </button>
           <button
             type="button"
             onClick={handleExportCsv}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-xs font-semibold text-white hover:bg-white/10 whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Export CSV
@@ -150,7 +168,7 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
           <button
             type="button"
             onClick={handleExportJson}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-xs font-semibold text-white hover:bg-white/10 whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Export JSON
@@ -160,15 +178,15 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
               <button
                 type="button"
                 onClick={() => onSend({ type: 'auction:rematch', keepSettings: true })}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-bold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
               >
                 <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                Rematch (Same Rules)
+                Rematch
               </button>
               <button
                 type="button"
                 onClick={() => onSend({ type: 'auction:rematch', keepSettings: false })}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-500/15 px-3.5 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
               >
                 <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
                 New Setup
@@ -178,7 +196,7 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
           <button
             type="button"
             onClick={onLeave}
-            className="rounded-lg border border-white/15 px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-white/5 whitespace-nowrap"
+            className="rounded-xl border border-[#CFEAE0]/25 px-3.5 py-2 text-xs font-semibold text-[#CFEAE0]/85 hover:bg-[#131B2B] whitespace-nowrap"
           >
             Home
           </button>
@@ -187,22 +205,22 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
 
       {/* Top Signings Strip */}
       {topSignings.length > 0 && (
-        <div className="rounded-2xl border border-white/10 bg-[#111827] p-5 space-y-3">
-          <h2 className="font-display text-xl font-bold text-white">Highest Bids of the Auction</h2>
+        <div className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-5 space-y-3 shadow-xl">
+          <h2 className="font-display text-xl font-bold text-[#CFEAE0]">Highest Bids of the Auction</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {topSignings.map((item, idx) => (
               <div
                 key={item.player.id}
-                className="rounded-xl border border-white/10 bg-[#090D16] p-3.5 space-y-1.5"
+                className="rounded-xl border border-[#5B91A3]/30 bg-[#131B2B] p-3.5 space-y-1.5"
               >
-                <div className="text-[11px] font-mono-num text-slate-400">#{idx + 1} Signing</div>
-                <div className="truncate font-semibold text-white">{item.player.name}</div>
-                <div className="text-xs text-slate-400">{item.player.role} · {item.player.nationality}</div>
+                <div className="text-[11px] font-mono-num text-[#5B91A3]">#{idx + 1} Signing</div>
+                <div className="truncate font-bold text-[#CFEAE0]">{item.player.name}</div>
+                <div className="text-xs text-[#CFEAE0]/70">{item.player.role} · {item.player.nationality}</div>
                 <div className="flex items-center justify-between pt-1">
-                  <span className="font-mono-num text-sm font-bold text-amber-400">
+                  <span className="font-mono-num text-sm font-extrabold text-[#CFEAE0]">
                     {formatLakhsCompact(item.soldPrice)}
                   </span>
-                  <span className="font-mono-num text-xs font-semibold text-slate-300">
+                  <span className="font-mono-num text-xs font-bold text-[#5B91A3]">
                     {item.winningTeamShortCode}
                   </span>
                 </div>
@@ -223,16 +241,16 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
           return (
             <div
               key={team.id}
-              className="flex flex-col rounded-2xl border border-white/10 bg-[#111827] p-5 space-y-4"
+              className="flex flex-col rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-5 space-y-4 shadow-xl"
             >
-              <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-4">
+              <div className="flex items-start justify-between gap-3 border-b border-[#CFEAE0]/15 pb-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <TeamCrest shortCode={team.shortCode} color={team.color} size="lg" />
                   <div className="min-w-0">
-                    <h3 className="truncate font-display text-xl font-bold text-white">{team.name}</h3>
-                    <div className="text-xs text-slate-400">
+                    <h3 className="truncate font-display text-xl font-bold text-[#CFEAE0]">{team.name}</h3>
+                    <div className="text-xs text-[#CFEAE0]/75">
                       {team.controlType === 'bot' ? 'AI Managed' : team.ownerName || 'Human'} ·{' '}
-                      <span className={meetsMinSize ? 'text-emerald-400' : 'text-amber-400'}>
+                      <span className={meetsMinSize ? 'text-emerald-300 font-semibold' : 'text-amber-300 font-semibold'}>
                         {team.squad.length}/{state.config.maxSquadSize} Players
                       </span>
                     </div>
@@ -241,18 +259,18 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
               </div>
 
               {/* Financial & Balance Metrics */}
-              <div className="grid grid-cols-3 gap-2 rounded-xl border border-white/10 bg-[#090D16] p-3 text-xs">
+              <div className="grid grid-cols-3 gap-2 rounded-xl border border-[#5B91A3]/30 bg-[#131B2B] p-3 text-xs">
                 <div>
-                  <div className="text-slate-400">Spent</div>
-                  <div className="font-mono-num font-bold text-white">{formatLakhsCompact(spent)}</div>
+                  <div className="text-[#CFEAE0]/65">Spent</div>
+                  <div className="font-mono-num font-bold text-[#CFEAE0]">{formatLakhsCompact(spent)}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400">Purse Left</div>
-                  <div className="font-mono-num font-bold text-amber-400">{formatLakhsCompact(team.purse)}</div>
+                  <div className="text-[#CFEAE0]/65">Purse Left</div>
+                  <div className="font-mono-num font-bold text-[#5B91A3]">{formatLakhsCompact(team.purse)}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400">Overseas</div>
-                  <div className="font-mono-num font-bold text-white">
+                  <div className="text-[#CFEAE0]/65">Overseas</div>
+                  <div className="font-mono-num font-bold text-[#CFEAE0]">
                     {overseas}/{state.config.maxOverseas}
                   </div>
                 </div>
@@ -271,8 +289,8 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
                     key={label}
                     className={`rounded-md border px-2 py-1.5 ${
                       count >= req
-                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                        : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                        ? 'border-emerald-400/40 bg-emerald-950/35 text-emerald-200'
+                        : 'border-amber-300/35 bg-amber-950/30 text-amber-200'
                     }`}
                   >
                     {label} {count}/{req}
@@ -283,20 +301,20 @@ export function ResultsSummary({ state, clientId, onSend, onLeave }: ResultsSumm
               {/* Squad List */}
               <div className="flex-1 space-y-1.5 max-h-64 overflow-y-auto pr-1">
                 {team.squad.length === 0 ? (
-                  <div className="py-6 text-center text-xs text-slate-500">No players signed.</div>
+                  <div className="py-6 text-center text-xs text-[#CFEAE0]/60">No players signed.</div>
                 ) : (
                   team.squad.map((item) => (
                     <div
                       key={item.player.id}
-                      className="flex items-center justify-between rounded-lg border border-white/5 bg-[#090D16] px-3 py-2 text-xs"
+                      className="flex items-center justify-between rounded-lg border border-[#5B91A3]/25 bg-[#131B2B] px-3 py-2 text-xs"
                     >
                       <div className="min-w-0">
-                        <div className="truncate font-medium text-white">{item.player.name}</div>
-                        <div className="text-slate-400">
+                        <div className="truncate font-semibold text-[#CFEAE0]">{item.player.name}</div>
+                        <div className="text-[#CFEAE0]/70">
                           {item.player.role} · {item.player.nationality}
                         </div>
                       </div>
-                      <span className="ml-2 font-mono-num font-semibold text-amber-400 shrink-0">
+                      <span className="ml-2 font-mono-num font-bold text-[#5B91A3] shrink-0">
                         {formatLakhs(item.soldPrice)}
                       </span>
                     </div>

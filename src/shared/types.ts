@@ -142,6 +142,58 @@ export interface Participant {
   joinedAt: number;
 }
 
+export interface TeamCriteriaScores {
+  battingDepth: number;
+  bowlingCoverage: number;
+  allRounderBalance: number;
+  wicketkeeperAvailability: number;
+  squadDepth: number;
+  remainingPurse: number;
+}
+
+export interface TeamAnalysisMetrics {
+  squadSize: number;
+  minSquadSize: number;
+  metMinSquad: boolean;
+  overseasCount: number;
+  spentLakhs: number;
+  remainingPurseLakhs: number;
+  avgRating: number;
+  roleCounts: RoleRequirements;
+}
+
+export interface TeamAnalysisEntry {
+  rank: number;
+  teamId: string;
+  teamName: string;
+  teamShortCode: string;
+  teamColor: string;
+  controlType: 'human' | 'bot';
+  ownerName: string | null;
+  overallScore: number;
+  criteria: TeamCriteriaScores;
+  metrics: TeamAnalysisMetrics;
+  strengths: string[];
+  gaps: string[];
+  verdict: string;
+}
+
+export interface AuctionWinnerAnalysis {
+  roomCode: string;
+  generatedAt: number;
+  model: string;
+  winnerTeamId: string;
+  winnerTeamName: string;
+  winnerTeamShortCode: string;
+  winnerTeamColor: string;
+  isTie: boolean;
+  tieBreakerNote: string;
+  headline: string;
+  overallVerdict: string;
+  criteriaSummary: string;
+  rankings: TeamAnalysisEntry[];
+}
+
 export interface AuctionRoomState {
   roomCode: string;
   phase: RoomPhase;
@@ -154,6 +206,7 @@ export interface AuctionRoomState {
   currentLot: CurrentLot | null;
   lastOutcome: LotOutcome | null;
   eventLog: AuctionEvent[];
+  winnerAnalysis: AuctionWinnerAnalysis | null;
   serverTime: number;
   createdAt: number;
 }
