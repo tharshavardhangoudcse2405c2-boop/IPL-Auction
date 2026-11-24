@@ -1,5 +1,6 @@
 import type { AuctionConfig, FranchiseTemplate, Player, PlayerSet, PoolPreset } from './types.ts';
 import { EXPANDED_RAW_PLAYERS } from './playersExpanded.ts';
+import { PLAYERS_2026_AUCTION } from './players2026Auction.ts';
 import { VERIFIED_PHOTO_IDS } from './verifiedPhotoIds.ts';
 
 export const FRANCHISE_TEMPLATES: FranchiseTemplate[] = [
@@ -1072,10 +1073,96 @@ const RAW_PLAYERS: Omit<Player, 'photoUrl'>[] = [
   },
 ];
 
+// Retired pre-2026 legends and players retired/opted-out ahead of the 2026 IPL Auction
+const RETIRED_OR_ABSENT_2026 = new Set<string>([
+  'p-b10',   // Faf du Plessis (opted out for PSL 2026)
+  'p-ar2',   // Andre Russell (retired as IPL player)
+  'p-ar5',   // Glenn Maxwell (skipped IPL 2026 auction)
+  'p-mx6',   // Ravichandran Ashwin (retired from IPL)
+  'p-mx120', // Kane Williamson (opted out)
+  'p-mx129', // Shikhar Dhawan (retired)
+  'p-mx130', // David Warner (opted out)
+  'p-mx133', // Dwayne Bravo (retired)
+  'p-mx164', // Steve Smith (not in IPL 2026)
+  'p-ax166', // Moeen Ali (opted out for PSL 2026)
+  'p-mx193', // Lasith Malinga (retired)
+  'p-mx200', // Yuvraj Singh (retired)
+  'p-mx203', // Kieron Pollard (retired)
+  'p-mx204', // Gautam Gambhir (retired)
+  'p-mx205', // Brendon McCullum (retired)
+  'p-mx206', // Shane Watson (retired)
+  'p-mx236', // Chris Gayle (retired)
+  'p-mx241', // Suresh Raina (retired)
+  'p-mx242', // AB de Villiers (retired)
+  'p-mx243', // Dale Steyn (retired)
+  'p-mx244', // Sachin Tendulkar (retired)
+  'p-mx245', // Virender Sehwag (retired)
+  'p-mx246', // Adam Gilchrist (retired)
+  'p-mx249', // Jacques Kallis (retired)
+  'p-mx250', // Zaheer Khan (retired)
+  'p-wx131', // Robin Uthappa (retired)
+  'p-wx136', // Dinesh Karthik (retired)
+  'p-wx192', // Wriddhiman Saha (retired)
+  'p-wx228', // Naman Ojha (retired)
+  'p-wx229', // Parthiv Patel (retired)
+  'p-wx232', // Aditya Tare (retired)
+  'p-wx262', // Matthew Wade (retired from IPL)
+  'p-wx278', // Kumar Sangakkara (retired)
+  'p-bx134', // Ambati Rayudu (retired)
+  'p-bx152', // Mandeep Singh (retired)
+  'p-bx157', // Manan Vohra (inactive)
+  'p-bx170', // Cheteshwar Pujara (retired)
+  'p-bx180', // Chris Lynn (not in IPL 2026)
+  'p-bx181', // Eoin Morgan (retired)
+  'p-bx182', // Aaron Finch (retired)
+  'p-bx183', // Saurabh Tiwary (retired)
+  'p-bx189', // Hanuma Vihari (retired/absent)
+  'p-bx199', // Martin Guptill (retired)
+  'p-bx216', // Manoj Tiwary (retired)
+  'p-bx227', // Murali Vijay (retired)
+  'p-bx247', // Shaun Marsh (retired)
+  'p-bx248', // Michael Hussey (retired)
+  'p-bx273', // Rahul Dravid (retired)
+  'p-bx274', // Sourav Ganguly (retired)
+  'p-bx279', // Mahela Jayawardene (retired)
+  'p-ax165', // Shakib Al Hasan (not in IPL 2026)
+  'p-ax172', // Moises Henriques (retired from IPL)
+  'p-ax173', // Dan Christian (retired)
+  'p-ax178', // Ben Cutting (retired)
+  'p-ax190', // Carlos Brathwaite (retired)
+  'p-ax207', // Colin de Grandhomme (retired)
+  'p-ax208', // Yusuf Pathan (retired)
+  'p-ax209', // Colin Munro (retired)
+  'p-ax210', // Stuart Binny (retired)
+  'p-ax223', // Jean-Paul Duminy (retired)
+  'p-ax270', // Angelo Mathews (not in IPL 2026)
+  'p-ax271', // Thisara Perera (retired)
+  'p-ax275', // Irfan Pathan (retired)
+  'p-px149', // Murugan Ashwin (inactive)
+  'p-px150', // K. C. Cariappa (inactive)
+  'p-px162', // Tymal Mills (not in IPL 2026)
+  'p-px169', // Piyush Chawla (retired)
+  'p-px177', // Harbhajan Singh (retired)
+  'p-px194', // Varun Aaron (retired)
+  'p-px211', // Imran Tahir (not in IPL 2026)
+  'p-px212', // Amit Mishra (retired)
+  'p-px219', // Vinay Kumar (retired)
+  'p-px224', // Billy Stanlake (inactive)
+  'p-px225', // Andrew Tye (not in IPL 2026)
+  'p-px230', // Mitchell Johnson (retired)
+  'p-px231', // Tim Southee (retired)
+  'p-px251', // Morne Morkel (retired)
+  'p-px272', // Anil Kumble (retired)
+  'p-px276', // Ashish Nehra (retired)
+  'p-px277', // Muttiah Muralitharan (retired)
+  'p-px280', // Murali Kartik (retired)
+]);
+
 const ALL_RAW_PLAYERS: Omit<Player, 'photoUrl'>[] = [
   ...RAW_PLAYERS,
   ...EXPANDED_RAW_PLAYERS,
-];
+  ...PLAYERS_2026_AUCTION,
+].filter((p) => !RETIRED_OR_ABSENT_2026.has(p.id));
 
 export const REAL_PLAYER_POOL: Player[] = ALL_RAW_PLAYERS.map((p) => ({
   ...p,

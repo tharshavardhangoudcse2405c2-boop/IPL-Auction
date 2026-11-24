@@ -59,7 +59,7 @@ export function HomePage({ activeRoom, onNavigate }: HomePageProps) {
 
         <div className="relative z-10 max-w-2xl p-6 sm:p-10 lg:p-14 space-y-5">
           <div className="text-xs font-bold uppercase tracking-wider text-[#CFEAE0]">
-            2–12 Franchises · ₹120 Crore Purse · {REAL_PLAYER_POOL.length} Real IPL Cricketers
+            2–12 Franchises · ₹120 Crore Purse · {REAL_PLAYER_POOL.length} 2026 IPL Auction Players
           </div>
 
           <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#CFEAE0] leading-[1.02] [text-wrap:balance]">

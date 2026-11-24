@@ -305,5 +305,14 @@ export const VERIFIED_PHOTO_IDS = new Set<string>([
   "p-wx293",
   "p-bx294",
   "p-px295",
-  "p-px296"
+  "p-px296",
+  "p-26-green",
+  "p-26-inglis",
+  "p-26-duckett",
+  "p-26-shaw",
+  "p-26-duffy",
+  "p-26-connolly",
+  "p-26-dwarshuis",
+  "p-26-wood",
+  "p-26-raza"
 ]);

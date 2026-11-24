@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Copy, Download, RotateCcw, Settings2, Sparkles, Trophy } from 'lucide-react';
+import { Check, Copy, Download, FileText, RotateCcw, Settings2, Sparkles, Trophy } from 'lucide-react';
 import {
   formatLakhs,
   formatLakhsCompact,
@@ -97,6 +97,79 @@ export function ResultsSummary({
     downloadBlob(JSON.stringify(payload, null, 2), `real-auction-26-${state.roomCode}.json`, 'application/json');
   };
 
+  const handleExportText = () => {
+    const lines: string[] = [
+      '========================================================================',
+      `REAL AUCTION 26 — TEAM SQUAD DETAILS (ROOM ${state.roomCode})`,
+      '========================================================================',
+      `Exported: ${new Date().toLocaleString()}`,
+      `Format: ${state.config.mode.toUpperCase()} | Teams: ${state.teams.length} | Starting Purse: ${formatLakhsCompact(state.config.startingPurse)}`,
+      `Squad Limits: ${state.config.minSquadSize}-${state.config.maxSquadSize} Players | Max Overseas: ${state.config.maxOverseas}`,
+      `Total Sold: ${state.soldHistory.length} | Unsold Pool: ${state.unsoldPool.length}`,
+    ];
+
+    if (state.winnerAnalysis) {
+      lines.push(
+        `AI Predicted Winner (Not a Guaranteed Result): ${state.winnerAnalysis.winnerTeamName} — Confidence: ${state.winnerAnalysis.confidenceLevel ?? 'Moderate'} (${state.winnerAnalysis.confidencePercent ?? 70}%)`,
+      );
+      if (state.winnerAnalysis.overallVerdict) {
+        lines.push(`AI Summary: ${state.winnerAnalysis.overallVerdict}`);
+      }
+    }
+
+    lines.push('');
+
+    for (const team of state.teams) {
+      const spent = team.startingPurse - team.purse;
+      const overseas = getTeamOverseasCount(team);
+      const roles = getTeamRoleCounts(team);
+      const meetsMin = team.squad.length >= state.config.minSquadSize;
+
+      lines.push('------------------------------------------------------------------------');
+      lines.push(`${team.name} (${team.shortCode})`);
+      lines.push(
+        `Manager: ${team.controlType === 'bot' ? 'AI Managed' : team.ownerName || 'Human'} | Squad: ${team.squad.length}/${state.config.maxSquadSize} (${meetsMin ? 'Minimum Met' : `Below Min ${state.config.minSquadSize}`}) | Overseas: ${overseas}/${state.config.maxOverseas}`,
+      );
+      lines.push(
+        `Budget: Starting ${formatLakhsCompact(team.startingPurse)} | Spent ${formatLakhsCompact(spent)} | Remaining ${formatLakhsCompact(team.purse)}`,
+      );
+      lines.push(
+        `Roles: Batters ${roles.Batter} | Bowlers ${roles.Bowler} | All-Rounders ${roles['All-Rounder']} | Wicketkeepers ${roles.Wicketkeeper}`,
+      );
+      lines.push('');
+
+      if (team.squad.length === 0) {
+        lines.push('  (No players signed)');
+      } else {
+        team.squad.forEach((item, index) => {
+          const idxStr = String(index + 1).padStart(2, ' ');
+          const tag = item.player.isOverseas ? 'Overseas' : 'Domestic';
+          lines.push(
+            `  ${idxStr}. ${item.player.name} — ${item.player.role} (${item.player.tacticalRole}) | ${item.player.nationality} (${tag}) | Base: ${formatLakhs(item.player.basePrice)} | Sold: ${formatLakhs(item.soldPrice)}`,
+          );
+        });
+      }
+      lines.push('');
+    }
+
+    if (state.unsoldPool.length > 0) {
+      lines.push('------------------------------------------------------------------------');
+      lines.push(`UNSOLD PLAYERS (${state.unsoldPool.length})`);
+      lines.push('------------------------------------------------------------------------');
+      state.unsoldPool.forEach((p, index) => {
+        const idxStr = String(index + 1).padStart(2, ' ');
+        lines.push(`  ${idxStr}. ${p.name} — ${p.role} (${p.nationality}) | Base: ${formatLakhs(p.basePrice)}`);
+      });
+      lines.push('');
+    }
+
+    downloadBlob(
+      lines.join('\n'),
+      `real-auction-26-${state.roomCode}-squads.txt`,
+      'text/plain;charset=utf-8;',
+    );
+  };
+
   const handleCopySummary = async () => {
     const lines: string[] = [
       `Real Auction 26 Results (Room ${state.roomCode})`,
@@ -158,6 +231,15 @@ export function ResultsSummary({
           >
             {copiedSummary ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
             {copiedSummary ? 'Copied Summary' : 'Copy Summary'}
+          </button>
+          <button
+            type="button"
+            onClick={handleExportText}
+            aria-label="Download team squad details as formatted text file"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#5B91A3]/50 bg-[#131B2B] px-3.5 py-2 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            Download Squads (.txt)
           </button>
           <button
             type="button"

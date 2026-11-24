@@ -56,10 +56,10 @@ export function PlayerPoolPage({ onNavigate }: PlayerPoolPageProps) {
               Verified Cricketer Directory
             </div>
             <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-[#CFEAE0]">
-              IPL Auction Player Pool ({REAL_PLAYER_POOL.length} Players)
+              2026 IPL Auction Pool ({REAL_PLAYER_POOL.length} Players)
             </h1>
             <p className="mt-1 text-xs text-[#CFEAE0]/80">
-              Real IPL cricketers organized into Marquee, Batters, All-Rounders, Wicketkeepers, and Bowlers.
+              Active 2026 IPL auction stars and signings organized into Marquee, Batters, All-Rounders, Wicketkeepers, and Bowlers.
             </p>
           </div>
 

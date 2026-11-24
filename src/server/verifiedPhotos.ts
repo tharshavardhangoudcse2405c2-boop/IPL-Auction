@@ -306,5 +306,14 @@ export const VERIFIED_PHOTO_URLS: Record<string, string> = {
   "p-wx293": "https://www.iplt20.com/api/team-assets?pathname=player%2F8903%2F1622%2F67543.png&brand=ipl",
   "p-bx294": "https://www.iplt20.com/api/team-assets?pathname=player%2F8903%2F1622%2F76206.png&brand=ipl",
   "p-px295": "https://www.iplt20.com/api/team-assets?pathname=player%2F8903%2F1153%2F77440.png&brand=ipl",
-  "p-px296": "https://www.iplt20.com/api/team-assets?pathname=player%2F8903%2F1153%2F20236.png&brand=ipl"
+  "p-px296": "https://www.iplt20.com/api/team-assets?pathname=player%2F8903%2F1153%2F20236.png&brand=ipl",
+  "p-26-green": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/RSA_vs_AUS_Day_4-Cameron_Green-1.jpg/330px-RSA_vs_AUS_Day_4-Cameron_Green-1.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-inglis": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e0/RSA_vs_AUS_Day_3-Josh_Inglis_04.jpg/330px-RSA_vs_AUS_Day_3-Josh_Inglis_04.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-duckett": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fd/3_31_Another_four_%28Ben_Duckett_cropped%29.jpg/330px-3_31_Another_four_%28Ben_Duckett_cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-shaw": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a8/Prithvi_shaw.png/330px-Prithvi_shaw.png?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-duffy": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/1_01_Jacob_Duffy.jpg/330px-1_01_Jacob_Duffy.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-connolly": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/af/RSA_vs_AUS_Day_-Cooper_Connolly-1.jpg/330px-RSA_vs_AUS_Day_-Cooper_Connolly-1.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-dwarshuis": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/be/20261111_Dwarshuis.jpg/330px-20261111_Dwarshuis.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-wood": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/2_16_Luke_Wood_sequence_%28cropped%29.jpg/330px-2_16_Luke_Wood_sequence_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
+  "p-26-raza": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2c/Sikandar_Raza_2022.jpg/330px-Sikandar_Raza_2022.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
 };

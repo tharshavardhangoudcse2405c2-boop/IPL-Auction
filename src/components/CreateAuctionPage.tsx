@@ -339,7 +339,7 @@ export function CreateAuctionPage({
               <option value="quick_25">Quick Draft (25)</option>
               <option value="standard_40">Standard Auction (40)</option>
               <option value="mega_60">Mega Draft (60)</option>
-              <option value="full_pool">Full IPL Pool ({REAL_PLAYER_POOL.length})</option>
+              <option value="full_pool">Full 2026 IPL Pool ({REAL_PLAYER_POOL.length})</option>
             </select>
           </label>
         </div>
