@@ -321,6 +321,7 @@ export function updateLobbyConfig(runtime: RoomRuntime, clientId: string, partia
   const prevTeamCount = state.config.teamCount;
   const prevMode = state.config.mode;
   const prevPurse = state.config.startingPurse;
+  const prevPoolKey = `${state.config.poolPreset}:${[...state.config.enabledSets].sort().join(',')}`;
   const nextConfig = sanitizeConfig({ ...state.config, ...partial });
   state.config = nextConfig;
 
@@ -346,7 +347,10 @@ export function updateLobbyConfig(runtime: RoomRuntime, clientId: string, partia
     }
   }
 
-  state.playerQueue = buildPlayerQueue(nextConfig.enabledSets, nextConfig.poolPreset);
+  const nextPoolKey = `${nextConfig.poolPreset}:${[...nextConfig.enabledSets].sort().join(',')}`;
+  if (nextPoolKey !== prevPoolKey) {
+    state.playerQueue = buildPlayerQueue(nextConfig.enabledSets, nextConfig.poolPreset);
+  }
   pushEvent(state, {
     type: 'system',
     message: `Rules updated: ${nextConfig.teamCount} teams · ${formatLakhs(nextConfig.startingPurse)} purse · ${nextConfig.minSquadSize}–${nextConfig.maxSquadSize} squad · ${nextConfig.timerSeconds}s clock · AI: ${nextConfig.botDifficulty}.`,
@@ -787,7 +791,7 @@ function computeBotValuation(
   return result;
 }
 
-function scheduleBotsForCurrentLot(runtime: RoomRuntime, now: number): void {
+export function scheduleBotsForCurrentLot(runtime: RoomRuntime, now: number): void {
   const state = runtime.state;
   if (state.phase !== 'LIVE' || !state.currentLot) return;
 

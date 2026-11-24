@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -22,6 +23,7 @@ import {
   reauctionPlayer,
   rematchRoom,
   resumeAuction,
+  scheduleBotsForCurrentLot,
   startAuction,
   tickRoom,
   timingSafeTokenEquals,
@@ -56,6 +58,77 @@ const socketMetas = new Map<WebSocket, SocketMeta>();
 const photoCache = new Map<string, CachedPhoto>();
 const photoInFlight = new Map<string, Promise<CachedPhoto | null>>();
 const analysisInFlight = new Map<string, Promise<Awaited<ReturnType<typeof generateAuctionWinnerAnalysis>>>>();
+
+const ROOMS_SNAPSHOT_PATH = path.join(os.tmpdir(), 'real-auction-26-rooms.json');
+const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
+let persistTimer: NodeJS.Timeout | null = null;
+
+interface PersistedRoomRecord {
+  state: RoomRuntime['state'];
+  sessionTokens: Array<[string, string]>;
+  autoAdvanceAt: number | null;
+  lastTickAt: number;
+}
+
+async function writeRoomsSnapshot(): Promise<void> {
+  try {
+    const records: PersistedRoomRecord[] = [];
+    for (const runtime of rooms.values()) {
+      records.push({
+        state: runtime.state,
+        sessionTokens: Array.from(runtime.sessionTokens.entries()),
+        autoAdvanceAt: runtime.autoAdvanceAt,
+        lastTickAt: runtime.lastTickAt,
+      });
+    }
+    const tmpPath = `${ROOMS_SNAPSHOT_PATH}.tmp`;
+    await fs.writeFile(tmpPath, JSON.stringify(records), 'utf8');
+    await fs.rename(tmpPath, ROOMS_SNAPSHOT_PATH);
+  } catch {
+    // Best-effort local persistence
+  }
+}
+
+function schedulePersistRooms(): void {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void writeRoomsSnapshot();
+  }, 250);
+}
+
+async function restoreRoomsSnapshot(): Promise<void> {
+  try {
+    const raw = await fs.readFile(ROOMS_SNAPSHOT_PATH, 'utf8');
+    const parsed = JSON.parse(raw) as PersistedRoomRecord[];
+    if (!Array.isArray(parsed)) return;
+    const now = Date.now();
+    for (const rec of parsed) {
+      if (!rec?.state?.roomCode || !Array.isArray(rec.state.playerQueue)) continue;
+      if (now - (rec.lastTickAt || rec.state.createdAt || now) > ROOM_TTL_MS) continue;
+      for (const p of rec.state.participants ?? []) {
+        p.connected = false;
+      }
+      if (rec.state.phase === 'LIVE' && rec.state.currentLot) {
+        rec.state.currentLot.lotEndsAt = now + Math.max(8, rec.state.config.timerSeconds) * 1000;
+      }
+      const runtime: RoomRuntime = {
+        state: rec.state,
+        sessionTokens: new Map(Array.isArray(rec.sessionTokens) ? rec.sessionTokens : []),
+        botLotValuations: new Map(),
+        botReadyAt: new Map(),
+        autoAdvanceAt: rec.autoAdvanceAt ?? null,
+        lastTickAt: now,
+      };
+      if (rec.state.phase === 'LIVE' && rec.state.currentLot) {
+        scheduleBotsForCurrentLot(runtime, now);
+      }
+      rooms.set(rec.state.roomCode, runtime);
+    }
+  } catch {
+    // Snapshot may not exist yet on first run
+  }
+}
 
 const WIKI_USER_AGENT = 'RealAuction26Bot/1.0 (https://realauction26.local; admin@realauction26.local)';
 const MAX_CONCURRENT_PHOTO_FETCHES = 8;
@@ -198,6 +271,7 @@ function broadcastRoomState(roomCode: string): void {
       meta.ws.send(payload);
     }
   }
+  schedulePersistRooms();
 }
 
 function detachSocketFromRoom(meta: SocketMeta): void {
@@ -232,6 +306,7 @@ function allocateUniqueRoomCode(): string {
 }
 
 async function startServer(): Promise<void> {
+  await restoreRoomsSnapshot();
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '256kb' }));
@@ -410,6 +485,7 @@ async function startServer(): Promise<void> {
           sessionToken,
           state: runtime.state,
         });
+        schedulePersistRooms();
         return;
       }
 
@@ -668,8 +744,9 @@ async function startServer(): Promise<void> {
       }
 
       const hasConnected = runtime.state.participants.some((p) => p.connected);
-      if (!hasConnected && now - runtime.lastTickAt > 6 * 60 * 60 * 1000) {
+      if (!hasConnected && now - runtime.lastTickAt > ROOM_TTL_MS) {
         rooms.delete(code);
+        schedulePersistRooms();
       }
     }
   }, 250);

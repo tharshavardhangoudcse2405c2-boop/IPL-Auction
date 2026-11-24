@@ -1084,59 +1084,86 @@ export const REAL_PLAYER_POOL: Player[] = ALL_RAW_PLAYERS.map((p) => ({
 
 export const FICTIONAL_PLAYER_POOL = REAL_PLAYER_POOL;
 
-export function buildPlayerQueue(enabledSets: PlayerSet[], preset: PoolPreset): Player[] {
-  const limitBySet: Record<PoolPreset, Record<PlayerSet, number>> = {
-    quick_25: {
-      Marquee: 5,
-      Batters: 5,
-      'All-Rounders': 5,
-      Wicketkeepers: 4,
-      Bowlers: 6,
-    },
-    standard_40: {
-      Marquee: 7,
-      Batters: 9,
-      'All-Rounders': 8,
-      Wicketkeepers: 6,
-      Bowlers: 10,
-    },
-    mega_60: {
-      Marquee: 8,
-      Batters: 14,
-      'All-Rounders': 12,
-      Wicketkeepers: 10,
-      Bowlers: 16,
-    },
-    full_pool: {
-      Marquee: Infinity,
-      Batters: Infinity,
-      'All-Rounders': Infinity,
-      Wicketkeepers: Infinity,
-      Bowlers: Infinity,
-    },
-  };
+const LIMIT_BY_SET: Record<PoolPreset, Record<PlayerSet, number>> = {
+  quick_25: {
+    Marquee: 5,
+    Batters: 5,
+    'All-Rounders': 5,
+    Wicketkeepers: 4,
+    Bowlers: 6,
+  },
+  standard_40: {
+    Marquee: 7,
+    Batters: 9,
+    'All-Rounders': 8,
+    Wicketkeepers: 6,
+    Bowlers: 10,
+  },
+  mega_60: {
+    Marquee: 8,
+    Batters: 14,
+    'All-Rounders': 12,
+    Wicketkeepers: 10,
+    Bowlers: 16,
+  },
+  full_pool: {
+    Marquee: Infinity,
+    Batters: Infinity,
+    'All-Rounders': Infinity,
+    Wicketkeepers: Infinity,
+    Bowlers: Infinity,
+  },
+};
 
+function getRandomInt(maxExclusive: number): number {
+  if (maxExclusive <= 1) return 0;
+  const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+  if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+    const buf = new Uint32Array(1);
+    const limit = Math.floor(0x100000000 / maxExclusive) * maxExclusive;
+    while (true) {
+      cryptoObj.getRandomValues(buf);
+      if (buf[0] < limit) {
+        return buf[0] % maxExclusive;
+      }
+    }
+  }
+  return Math.floor(Math.random() * maxExclusive);
+}
+
+export function shufflePlayers<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = getRandomInt(i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+export function getCanonicalPoolForSet(setName: PlayerSet, preset: PoolPreset): Player[] {
+  const setPlayers = REAL_PLAYER_POOL.filter((p) => p.set === setName);
+  const limit = LIMIT_BY_SET[preset][setName];
+  if (!Number.isFinite(limit) || limit >= setPlayers.length) {
+    return [...setPlayers];
+  }
+  // Deterministically select the exact same pool for this preset before shuffling
+  const indexById = new Map(setPlayers.map((p, idx) => [p.id, idx]));
+  const canonical = [...setPlayers].sort(
+    (a, b) =>
+      b.rating - a.rating ||
+      b.basePrice - a.basePrice ||
+      (indexById.get(a.id) ?? 0) - (indexById.get(b.id) ?? 0),
+  );
+  return canonical.slice(0, limit);
+}
+
+export function buildPlayerQueue(enabledSets: PlayerSet[], preset: PoolPreset): Player[] {
   const result: Player[] = [];
   for (const setName of SET_ORDER) {
     if (!enabledSets.includes(setName)) continue;
-    const setPlayers = REAL_PLAYER_POOL.filter((p) => p.set === setName);
-    const limit = limitBySet[preset][setName];
-    // Keep top 2 marquee stars first
-    const lead = setName === 'Marquee' ? setPlayers.slice(0, 2) : [];
-    const rest = setName === 'Marquee' ? setPlayers.slice(2) : [...setPlayers];
-
-    if (preset === 'full_pool') {
-      // Order remaining players by scouting rating descending so top stars enter early in each set
-      rest.sort((a, b) => b.rating - a.rating || b.basePrice - a.basePrice);
-      result.push(...lead, ...rest);
-    } else {
-      // Shuffle within each set for replayability across shorter presets
-      for (let i = rest.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [rest[i], rest[j]] = [rest[j], rest[i]];
-      }
-      result.push(...[...lead, ...rest].slice(0, limit));
-    }
+    const canonicalPool = getCanonicalPoolForSet(setName, preset);
+    result.push(...shufflePlayers(canonicalPool));
   }
   return result;
 }
+

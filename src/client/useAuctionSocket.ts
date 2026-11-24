@@ -14,9 +14,63 @@ interface RoomSessionHint {
   clientId: string;
   sessionToken: string;
   clientName: string;
+  updatedAt?: number;
 }
 
 const ACTIVE_SESSION_KEY = 'ra26_session_v1';
+const ROOM_CREDENTIALS_KEY = 'ra26_room_credentials_v1';
+const CREDENTIAL_TTL_MS = 7 * 60 * 60 * 1000;
+
+function readStoredCredentialsMap(): Record<string, RoomSessionHint> {
+  try {
+    const raw = localStorage.getItem(ROOM_CREDENTIALS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<RoomSessionHint>>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const now = Date.now();
+    const clean: Record<string, RoomSessionHint> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (!val || typeof val !== 'object' || !val.roomCode) continue;
+      if (typeof val.updatedAt === 'number' && now - val.updatedAt > CREDENTIAL_TTL_MS) continue;
+      const code = String(val.roomCode || key).trim().toUpperCase();
+      clean[code] = {
+        roomCode: code,
+        clientId: typeof val.clientId === 'string' ? val.clientId : '',
+        sessionToken: typeof val.sessionToken === 'string' ? val.sessionToken : '',
+        clientName: typeof val.clientName === 'string' && val.clientName ? val.clientName : 'Manager',
+        updatedAt: typeof val.updatedAt === 'number' ? val.updatedAt : now,
+      };
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+function loadRoomCredentials(roomCode: string): RoomSessionHint | null {
+  const code = roomCode.trim().toUpperCase();
+  if (!code) return null;
+  const sessionHint = loadRoomSession();
+  if (sessionHint && sessionHint.roomCode === code && sessionHint.clientId && sessionHint.sessionToken) {
+    return sessionHint;
+  }
+  const map = readStoredCredentialsMap();
+  return map[code] ?? null;
+}
+
+function removeRoomCredentials(roomCode: string): void {
+  const code = roomCode.trim().toUpperCase();
+  if (!code) return;
+  try {
+    const map = readStoredCredentialsMap();
+    if (code in map) {
+      delete map[code];
+      localStorage.setItem(ROOM_CREDENTIALS_KEY, JSON.stringify(map));
+    }
+  } catch {
+    // Ignore storage quota issues
+  }
+}
 
 function loadRoomSession(): RoomSessionHint | null {
   try {
@@ -43,6 +97,14 @@ function saveRoomSession(hint: RoomSessionHint | null): void {
       sessionStorage.removeItem(ACTIVE_SESSION_KEY);
     } else {
       sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(hint));
+      if (hint.clientId && hint.sessionToken) {
+        const map = readStoredCredentialsMap();
+        map[hint.roomCode] = { ...hint, updatedAt: Date.now() };
+        const entries = Object.entries(map)
+          .sort((a, b) => (b[1].updatedAt ?? 0) - (a[1].updatedAt ?? 0))
+          .slice(0, 20);
+        localStorage.setItem(ROOM_CREDENTIALS_KEY, JSON.stringify(Object.fromEntries(entries)));
+      }
     }
   } catch {
     // Ignore storage quota issues
@@ -238,6 +300,9 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
           onSoundEventRef.current?.('rejected');
           pushToast('error', msg.message);
           if (msg.code === 'ROOM_NOT_FOUND' || msg.code === 'ROOM_EXPIRED') {
+            if (activeSessionRef.current?.roomCode) {
+              removeRoomCredentials(activeSessionRef.current.roomCode);
+            }
             activeSessionRef.current = null;
             saveRoomSession(null);
             setRoomState(null);
@@ -285,12 +350,12 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
     const targetCode = pathCode || saved?.roomCode || null;
 
     if (targetCode) {
-      const sameRoom = saved && saved.roomCode === targetCode;
+      const creds = loadRoomCredentials(targetCode);
       const hint: RoomSessionHint = {
         roomCode: targetCode,
-        clientId: sameRoom ? saved.clientId : '',
-        sessionToken: sameRoom ? saved.sessionToken : '',
-        clientName: sameRoom ? saved.clientName : 'Manager',
+        clientId: creds?.clientId ?? '',
+        sessionToken: creds?.sessionToken ?? '',
+        clientName: creds?.clientName ?? 'Manager',
       };
       activeSessionRef.current = hint;
       connectSocket({
@@ -348,12 +413,11 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
         return;
       }
       const cleanName = clientName.trim() || 'Manager';
-      const saved = loadRoomSession();
-      const sameRoom = saved && saved.roomCode === code;
+      const saved = loadRoomCredentials(code);
       const hint: RoomSessionHint = {
         roomCode: code,
-        clientId: sameRoom ? saved.clientId : '',
-        sessionToken: sameRoom ? saved.sessionToken : '',
+        clientId: saved?.clientId ?? '',
+        sessionToken: saved?.sessionToken ?? '',
         clientName: cleanName,
       };
       activeSessionRef.current = hint;

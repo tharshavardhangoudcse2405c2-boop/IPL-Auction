@@ -345,6 +345,18 @@ export function LiveAuctionRoom({
 
   const volumePercent = Math.round(announcerStatus.volume * 100);
 
+  const currentSet = lot?.player.set ?? null;
+  const auctionedInSet = currentSet
+    ? state.soldHistory.filter((o) => o.player.set === currentSet).length +
+      state.unsoldPool.filter((p) => p.set === currentSet).length
+    : 0;
+  const queuedInSet = currentSet
+    ? state.playerQueue.filter((p) => p.set === currentSet).length
+    : 0;
+  const totalInSet = currentSet ? auctionedInSet + 1 + queuedInSet : 0;
+  const setProgressPct =
+    totalInSet > 0 ? Math.min(100, Math.round((auctionedInSet / totalInSet) * 100)) : 0;
+
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 space-y-5">
       {/* Screen-reader live announcement region synced with confirmed auction events */}
@@ -514,6 +526,29 @@ export function LiveAuctionRoom({
                     <h1 className="mt-1 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#CFEAE0] leading-tight">
                       {lot.player.name}
                     </h1>
+                    <div className="mt-2.5 rounded-lg border border-[#5B91A3]/25 bg-[#131B2B]/70 px-3 py-2 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-[#CFEAE0]/85">
+                          {lot.player.set} Set Progress
+                        </span>
+                        <span className="font-mono-num font-bold text-[#CFEAE0]">
+                          {auctionedInSet} / {totalInSet} auctioned
+                        </span>
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-label={`${lot.player.set} set auction progress`}
+                        aria-valuenow={auctionedInSet}
+                        aria-valuemin={0}
+                        aria-valuemax={totalInSet}
+                        className="h-2 w-full overflow-hidden rounded-full bg-[#131B2B]"
+                      >
+                        <div
+                          className="h-full rounded-full bg-[#5B91A3] transition-all duration-300"
+                          style={{ width: `${setProgressPct}%` }}
+                        />
+                      </div>
+                    </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-[#CFEAE0]/85">
                       <span className="font-bold text-[#CFEAE0]">{lot.player.role}</span>
                       <span className="text-[#5B91A3]" aria-hidden="true">·</span>
