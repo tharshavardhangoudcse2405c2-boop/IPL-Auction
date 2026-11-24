@@ -134,34 +134,12 @@ export interface LotOutcome {
 
 export interface Participant {
   clientId: string;
-  userId: string;
   name: string;
   isHost: boolean;
   connected: boolean;
   teamId: string | null;
   isReady: boolean;
   joinedAt: number;
-}
-
-export type AuthChannel = 'email' | 'phone';
-
-export interface AuthUser {
-  id: string;
-  displayName: string;
-  channel: AuthChannel;
-  email: string | null;
-  phone: string | null;
-  maskedTarget: string;
-}
-
-export interface AuthProvidersStatus {
-  database: boolean;
-  authSecret: boolean;
-  email: boolean;
-  sms: boolean;
-  missingDatabaseVars: string[];
-  missingEmailVars: string[];
-  missingSmsVars: string[];
 }
 
 export interface TeamCriteriaScores {

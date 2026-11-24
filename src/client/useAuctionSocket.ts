@@ -56,20 +56,11 @@ export interface ToastNotice {
 }
 
 interface UseAuctionSocketOptions {
-  authenticated: boolean;
-  defaultDisplayName?: string;
-  onAuthExpired?: () => void;
   onRoomJoined?: (state: AuctionRoomState) => void;
   onSoundEvent?: (kind: 'joined' | 'rejected') => void;
 }
 
-export function useAuctionSocket({
-  authenticated,
-  defaultDisplayName = 'Manager',
-  onAuthExpired,
-  onRoomJoined,
-  onSoundEvent,
-}: UseAuctionSocketOptions) {
+export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocketOptions = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [roomState, setRoomState] = useState<AuctionRoomState | null>(null);
   const [clientId, setClientId] = useState<string>('');
@@ -85,14 +76,8 @@ export function useAuctionSocket({
   const activeSessionRef = useRef<RoomSessionHint | null>(loadRoomSession());
   const pendingActionRef = useRef<ClientMessage | null>(null);
   const intentionalCloseRef = useRef<boolean>(false);
-  const authenticatedRef = useRef(authenticated);
   const onRoomJoinedRef = useRef(onRoomJoined);
   const onSoundEventRef = useRef(onSoundEvent);
-  const onAuthExpiredRef = useRef(onAuthExpired);
-
-  useEffect(() => {
-    authenticatedRef.current = authenticated;
-  }, [authenticated]);
 
   useEffect(() => {
     onRoomJoinedRef.current = onRoomJoined;
@@ -101,10 +86,6 @@ export function useAuctionSocket({
   useEffect(() => {
     onSoundEventRef.current = onSoundEvent;
   }, [onSoundEvent]);
-
-  useEffect(() => {
-    onAuthExpiredRef.current = onAuthExpired;
-  }, [onAuthExpired]);
 
   const pushToast = useCallback((kind: ToastNotice['kind'], message: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
@@ -146,10 +127,6 @@ export function useAuctionSocket({
 
   const connectSocket = useCallback(
     (onOpenMessage?: ClientMessage) => {
-      if (!authenticatedRef.current) {
-        return;
-      }
-
       clearTimers();
       intentionalCloseRef.current = false;
 
@@ -236,7 +213,7 @@ export function useAuctionSocket({
             roomCode: msg.roomCode,
             clientId: msg.clientId,
             sessionToken: msg.sessionToken,
-            clientName: me?.name || activeSessionRef.current?.clientName || defaultDisplayName,
+            clientName: me?.name || activeSessionRef.current?.clientName || 'Manager',
           };
           activeSessionRef.current = hint;
           saveRoomSession(hint);
@@ -275,22 +252,11 @@ export function useAuctionSocket({
         setConnectionError('Real-time connection interrupted. Attempting to restore...');
       };
 
-      ws.onclose = (closeEvent) => {
+      ws.onclose = () => {
         clearTimers();
         wsRef.current = null;
-        if (intentionalCloseRef.current || !authenticatedRef.current) {
+        if (intentionalCloseRef.current) {
           setStatus('idle');
-          return;
-        }
-
-        if (closeEvent.code === 4401) {
-          activeSessionRef.current = null;
-          saveRoomSession(null);
-          setRoomState(null);
-          setClientId('');
-          setSessionToken('');
-          setStatus('idle');
-          onAuthExpiredRef.current?.();
           return;
         }
 
@@ -308,24 +274,11 @@ export function useAuctionSocket({
         }
       };
     },
-    [clearTimers, defaultDisplayName, pushToast],
+    [clearTimers, pushToast],
   );
 
-  // Restore active room once authenticated if URL is /room/:code or sessionStorage has an active room session
+  // Restore active room directly if URL is /room/:code or sessionStorage has an active room session
   useEffect(() => {
-    if (!authenticated) {
-      intentionalCloseRef.current = true;
-      clearTimers();
-      wsRef.current?.close();
-      wsRef.current = null;
-      setRoomState(null);
-      setClientId('');
-      setSessionToken('');
-      setStatus('idle');
-      setConnectionError(null);
-      return;
-    }
-
     const pathMatch = window.location.pathname.match(/^\/room\/([A-Za-z0-9]{4,10})(?:\/(?:winner|results))?$/i);
     const pathCode = pathMatch ? pathMatch[1].toUpperCase() : null;
     const saved = loadRoomSession();
@@ -337,7 +290,7 @@ export function useAuctionSocket({
         roomCode: targetCode,
         clientId: sameRoom ? saved.clientId : '',
         sessionToken: sameRoom ? saved.sessionToken : '',
-        clientName: sameRoom ? saved.clientName : defaultDisplayName,
+        clientName: sameRoom ? saved.clientName : 'Manager',
       };
       activeSessionRef.current = hint;
       connectSocket({
@@ -354,14 +307,10 @@ export function useAuctionSocket({
       clearTimers();
       wsRef.current?.close();
     };
-  }, [authenticated, clearTimers, connectSocket, defaultDisplayName]);
+  }, [clearTimers, connectSocket]);
 
   const sendMessage = useCallback(
     (msg: ClientMessage) => {
-      if (!authenticatedRef.current) {
-        pushToast('error', 'Sign in to send auction actions.');
-        return;
-      }
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
@@ -375,7 +324,6 @@ export function useAuctionSocket({
 
   const createRoom = useCallback(
     (clientName: string, config: AuctionConfig, customTeams?: Partial<Team>[]) => {
-      if (!authenticatedRef.current) return;
       setRoomState(null);
       setClientId('');
       setSessionToken('');
@@ -384,23 +332,22 @@ export function useAuctionSocket({
       connectSocket({
         type: 'room:create',
         clientId: '',
-        clientName: clientName.trim() || defaultDisplayName || 'Auctioneer',
+        clientName: clientName.trim() || 'Auctioneer',
         config,
         customTeams,
       });
     },
-    [connectSocket, defaultDisplayName],
+    [connectSocket],
   );
 
   const joinRoomByCode = useCallback(
     (roomCode: string, clientName: string) => {
-      if (!authenticatedRef.current) return;
       const code = roomCode.trim().toUpperCase();
       if (!code) {
         pushToast('error', 'Enter a valid room code.');
         return;
       }
-      const cleanName = clientName.trim() || defaultDisplayName || 'Manager';
+      const cleanName = clientName.trim() || 'Manager';
       const saved = loadRoomSession();
       const sameRoom = saved && saved.roomCode === code;
       const hint: RoomSessionHint = {
@@ -420,7 +367,7 @@ export function useAuctionSocket({
         clientName: cleanName,
       });
     },
-    [connectSocket, defaultDisplayName, pushToast],
+    [connectSocket, pushToast],
   );
 
   const leaveRoom = useCallback(() => {
@@ -428,7 +375,6 @@ export function useAuctionSocket({
   }, [resetRoomState]);
 
   const manualReconnect = useCallback(() => {
-    if (!authenticatedRef.current) return;
     reconnectAttemptRef.current = 0;
     connectSocket();
   }, [connectSocket]);
