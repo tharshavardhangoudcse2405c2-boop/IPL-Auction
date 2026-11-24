@@ -9,9 +9,19 @@ import {
   RotateCcw,
   SkipForward,
   Undo2,
+  Volume2,
+  VolumeX,
   XCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import {
+  auctionAnnouncer,
+  buildBidAnnouncement,
+  buildLeadChangeAnnouncement,
+  buildNewPlayerAnnouncement,
+  buildOutcomeAnnouncement,
+  type AnnouncerStatus,
+} from '../client/announcer.ts';
 import {
   playBidSound,
   playExtendTimerSound,
@@ -65,10 +75,27 @@ export function LiveAuctionRoom({
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [pendingBidKey, setPendingBidKey] = useState<string | null>(null);
   const [showAllQueue, setShowAllQueue] = useState(false);
+  const [announcerStatus, setAnnouncerStatus] = useState<AnnouncerStatus>(() =>
+    auctionAnnouncer.getStatus(),
+  );
 
   const prevBidIdRef = useRef<string | null>(state.currentLot?.bidHistory[0]?.id ?? null);
   const prevOutcomeTsRef = useRef<number | null>(state.lastOutcome?.timestamp ?? null);
   const prevLotNumRef = useRef<number | null>(null);
+  const announcedLotKeyRef = useRef<string | null>(null);
+  const announcedBidIdRef = useRef<string | null>(state.currentLot?.bidHistory[0]?.id ?? null);
+  const announcedLeadRef = useRef<{ lotNumber: number; teamId: string | null; amount: number } | null>(
+    state.currentLot
+      ? {
+          lotNumber: state.currentLot.lotNumber,
+          teamId: state.currentLot.leadingTeamId,
+          amount: state.currentLot.currentBid,
+        }
+      : null,
+  );
+  const announcedOutcomeKeyRef = useRef<string | null>(
+    state.lastOutcome ? `${state.lastOutcome.player.id}:${state.lastOutcome.timestamp}` : null,
+  );
   const prevPhaseRef = useRef<AuctionRoomState['phase']>(state.phase);
   const prevLotEndsAtRef = useRef<{ lotNum: number; endsAt: number; bidsLen: number } | null>(
     state.currentLot
@@ -111,11 +138,41 @@ export function LiveAuctionRoom({
     : 0;
 
   useEffect(() => {
+    const unsubscribe = auctionAnnouncer.subscribe(setAnnouncerStatus);
+    const handleGestureUnlock = () => {
+      auctionAnnouncer.unlockFromGesture();
+    };
+    window.addEventListener('pointerdown', handleGestureUnlock, { passive: true, capture: true });
+    window.addEventListener('keydown', handleGestureUnlock, { passive: true, capture: true });
+    return () => {
+      unsubscribe();
+      window.removeEventListener('pointerdown', handleGestureUnlock, true);
+      window.removeEventListener('keydown', handleGestureUnlock, true);
+      auctionAnnouncer.clearAllSpeech();
+    };
+  }, []);
+
+  useEffect(() => {
     if (lot && state.phase === 'LIVE' && prevLotNumRef.current !== lot.lotNumber) {
       prevLotNumRef.current = lot.lotNumber;
       playNewLotSound(muted);
     }
   }, [lot, state.phase, muted]);
+
+  // Spoken announcement: new player enters the block (server-confirmed currentLot)
+  useEffect(() => {
+    if (!lot || state.phase !== 'LIVE') return;
+    const lotKey = `${lot.lotNumber}:${lot.player.id}:${lot.openedAt}`;
+    if (announcedLotKeyRef.current !== lotKey) {
+      announcedLotKeyRef.current = lotKey;
+      announcedLeadRef.current = {
+        lotNumber: lot.lotNumber,
+        teamId: lot.leadingTeamId,
+        amount: lot.currentBid,
+      };
+      auctionAnnouncer.enqueue('lot', buildNewPlayerAnnouncement(lot.player), `lot:${lotKey}`);
+    }
+  }, [lot, state.phase]);
 
   useEffect(() => {
     const prev = prevPhaseRef.current;
@@ -158,7 +215,48 @@ export function LiveAuctionRoom({
       prevBidIdRef.current = latestBid.id;
       playBidSound(muted, !latestBid.isBot);
     }
-  }, [lot?.bidHistory, muted]);
+
+    // Spoken announcement: server-confirmed accepted bid or highest-bidder change
+    if (!lot || (state.phase !== 'LIVE' && state.phase !== 'PAUSED')) return;
+
+    if (latestBid && latestBid.id !== announcedBidIdRef.current) {
+      announcedBidIdRef.current = latestBid.id;
+      announcedLeadRef.current = {
+        lotNumber: lot.lotNumber,
+        teamId: lot.leadingTeamId,
+        amount: lot.currentBid,
+      };
+      auctionAnnouncer.enqueue(
+        'bid',
+        buildBidAnnouncement(latestBid.teamName, latestBid.amount),
+        `bid:${latestBid.id}`,
+      );
+      return;
+    }
+
+    const prevLead = announcedLeadRef.current;
+    if (
+      prevLead &&
+      prevLead.lotNumber === lot.lotNumber &&
+      (prevLead.teamId !== lot.leadingTeamId || prevLead.amount !== lot.currentBid)
+    ) {
+      announcedLeadRef.current = {
+        lotNumber: lot.lotNumber,
+        teamId: lot.leadingTeamId,
+        amount: lot.currentBid,
+      };
+      if (lot.leadingTeamId && lot.currentBid > 0) {
+        const leader = state.teams.find((t) => t.id === lot.leadingTeamId);
+        if (leader) {
+          auctionAnnouncer.enqueue(
+            'bid',
+            buildLeadChangeAnnouncement(leader.name, lot.currentBid),
+            `lead:${lot.lotNumber}:${lot.leadingTeamId}:${lot.currentBid}`,
+          );
+        }
+      }
+    }
+  }, [lot, state.phase, state.teams, muted]);
 
   useEffect(() => {
     if (state.phase === 'LIVE' && remainingSec > 0 && remainingSec <= 4) {
@@ -178,6 +276,15 @@ export function LiveAuctionRoom({
         playSoldSound(muted);
       } else {
         playUnsoldSound(muted);
+      }
+    }
+
+    // Spoken announcement: server-confirmed lot close (SOLD / UNSOLD)
+    if (state.phase === 'LOT_RESULT' && outcome) {
+      const outcomeKey = `${outcome.player.id}:${outcome.timestamp}`;
+      if (announcedOutcomeKeyRef.current !== outcomeKey) {
+        announcedOutcomeKeyRef.current = outcomeKey;
+        auctionAnnouncer.enqueue('result', buildOutcomeAnnouncement(outcome), `result:${outcomeKey}`);
       }
     }
   }, [state.phase, outcome, muted]);
@@ -219,6 +326,7 @@ export function LiveAuctionRoom({
   const handlePlaceBid = (teamId: string, expectedAmount: number) => {
     if (!lot) return;
     unlockAudio();
+    auctionAnnouncer.unlockFromGesture();
     const key = `${lot.lotNumber}:${teamId}:${expectedAmount}`;
     setPendingBidKey(key);
     if (pendingTimerRef.current !== null) {
@@ -235,61 +343,157 @@ export function LiveAuctionRoom({
     });
   };
 
+  const volumePercent = Math.round(announcerStatus.volume * 100);
+
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 space-y-5">
+      {/* Screen-reader live announcement region synced with confirmed auction events */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {announcerStatus.lastSpokenText}
+      </div>
+
       {/* Top Broadcast Context Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#5B91A3]/35 bg-[#2F4A63] px-4 py-3 shadow-lg">
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="font-display text-lg font-bold tracking-wide text-[#CFEAE0]">
-            Room <span className="font-mono-num text-white">{state.roomCode}</span>
-          </span>
-          <span className="text-[#5B91A3]" aria-hidden="true">·</span>
-          <span className="text-[#CFEAE0]/85">
-            {lot ? `Lot #${lot.lotNumber} of ${lot.totalLots}` : `Completed ${state.soldHistory.length + state.unsoldPool.length} Lots`}
-          </span>
-          <span className="text-[#5B91A3]" aria-hidden="true">·</span>
-          <span className="text-[#CFEAE0]/85">
-            {lot ? `Set: ${lot.player.set}` : 'Lot Transition'}
-          </span>
-          <span className="text-[#5B91A3]" aria-hidden="true">·</span>
-          <span
-            className={`font-bold ${
-              state.phase === 'LIVE'
-                ? 'text-emerald-300'
+      <div className="flex flex-col gap-3 rounded-xl border border-[#5B91A3]/35 bg-[#2F4A63] px-4 py-3 shadow-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-display text-lg font-bold tracking-wide text-[#CFEAE0]">
+              Room <span className="font-mono-num text-white">{state.roomCode}</span>
+            </span>
+            <span className="text-[#5B91A3]" aria-hidden="true">·</span>
+            <span className="text-[#CFEAE0]/85">
+              {lot ? `Lot #${lot.lotNumber} of ${lot.totalLots}` : `Completed ${state.soldHistory.length + state.unsoldPool.length} Lots`}
+            </span>
+            <span className="text-[#5B91A3]" aria-hidden="true">·</span>
+            <span className="text-[#CFEAE0]/85">
+              {lot ? `Set: ${lot.player.set}` : 'Lot Transition'}
+            </span>
+            <span className="text-[#5B91A3]" aria-hidden="true">·</span>
+            <span
+              className={`font-bold ${
+                state.phase === 'LIVE'
+                  ? 'text-emerald-300'
+                  : state.phase === 'PAUSED'
+                    ? 'text-amber-300'
+                    : 'text-[#CFEAE0]'
+              }`}
+            >
+              {state.phase === 'LIVE'
+                ? 'Bidding Open'
                 : state.phase === 'PAUSED'
-                  ? 'text-amber-300'
-                  : 'text-[#CFEAE0]'
-            }`}
-          >
-            {state.phase === 'LIVE'
-              ? 'Bidding Open'
-              : state.phase === 'PAUSED'
-                ? 'Clock Paused'
-                : outcome?.status === 'SOLD'
-                  ? 'Hammer Sold'
-                  : 'Marked Unsold'}
-          </span>
+                  ? 'Clock Paused'
+                  : outcome?.status === 'SOLD'
+                    ? 'Hammer Sold'
+                    : 'Marked Unsold'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-[#CFEAE0]/80">
+            <span>
+              Sold: <strong className="font-mono-num text-[#CFEAE0]">{state.soldHistory.length}</strong>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Unsold: <strong className="font-mono-num text-[#CFEAE0]">{state.unsoldPool.length}</strong>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Queued: <strong className="font-mono-num text-[#CFEAE0]">{state.playerQueue.length}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="ml-1 rounded-lg border border-[#5B91A3]/50 bg-[#131B2B] px-3 py-1.5 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
+            >
+              Exit Room
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-[#CFEAE0]/80">
-          <span>
-            Sold: <strong className="font-mono-num text-[#CFEAE0]">{state.soldHistory.length}</strong>
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            Unsold: <strong className="font-mono-num text-[#CFEAE0]">{state.unsoldPool.length}</strong>
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            Queued: <strong className="font-mono-num text-[#CFEAE0]">{state.playerQueue.length}</strong>
-          </span>
-          <button
-            type="button"
-            onClick={onLeave}
-            className="ml-2 rounded-lg border border-[#5B91A3]/50 bg-[#131B2B] px-3 py-1 text-xs font-semibold text-[#CFEAE0] hover:bg-[#1B293D] whitespace-nowrap"
-          >
-            Exit Room
-          </button>
+        {/* Spoken Announcement Controls (Desktop & Mobile accessible) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#CFEAE0]/15 pt-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {announcerStatus.supported ? (
+              <>
+                <button
+                  type="button"
+                  aria-pressed={announcerStatus.muted}
+                  aria-label={
+                    announcerStatus.muted
+                      ? 'Unmute spoken auction announcements'
+                      : 'Mute spoken auction announcements'
+                  }
+                  onClick={() => {
+                    unlockAudio();
+                    auctionAnnouncer.setMuted(!announcerStatus.muted);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-bold transition-colors whitespace-nowrap ${
+                    announcerStatus.muted
+                      ? 'border-[#5B91A3]/40 bg-[#131B2B] text-[#CFEAE0]/75 hover:text-[#CFEAE0]'
+                      : 'border-[#5B91A3] bg-[#5B91A3] text-[#131B2B] hover:bg-[#70A7B9]'
+                  }`}
+                >
+                  {announcerStatus.muted ? (
+                    <VolumeX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Volume2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  <span>{announcerStatus.muted ? 'Voice Muted' : 'Voice On'}</span>
+                </button>
+
+                <label className="inline-flex items-center gap-2 rounded-lg border border-[#5B91A3]/35 bg-[#131B2B] px-3 py-1.5">
+                  <span className="text-[11px] font-semibold text-[#CFEAE0]/80 whitespace-nowrap">
+                    Volume
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={announcerStatus.muted ? 0 : volumePercent}
+                    aria-label="Spoken announcement volume"
+                    onChange={(e) => {
+                      const nextPct = Number(e.target.value);
+                      unlockAudio();
+                      auctionAnnouncer.unlockFromGesture();
+                      if (nextPct > 0 && announcerStatus.muted) {
+                        auctionAnnouncer.setMuted(false);
+                      }
+                      auctionAnnouncer.setVolume(nextPct / 100);
+                    }}
+                    className="h-1.5 w-20 sm:w-28 cursor-pointer accent-[#5B91A3]"
+                  />
+                  <span className="w-8 text-right font-mono-num text-[11px] font-bold text-[#CFEAE0]">
+                    {announcerStatus.muted ? '0%' : `${volumePercent}%`}
+                  </span>
+                </label>
+
+                {announcerStatus.autoplayBlocked && !announcerStatus.muted && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      unlockAudio();
+                      auctionAnnouncer.unlockFromGesture();
+                    }}
+                    className="rounded-lg border border-amber-300/60 bg-amber-950/60 px-2.5 py-1.5 text-[11px] font-bold text-amber-200 hover:bg-amber-950/85 whitespace-nowrap"
+                  >
+                    Tap to Enable Browser Voice
+                  </button>
+                )}
+              </>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#5B91A3]/30 bg-[#131B2B] px-3 py-1.5 text-[11px] text-[#CFEAE0]/70">
+                <VolumeX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                Voice announcements unavailable in this browser
+              </span>
+            )}
+          </div>
+
+          {announcerStatus.lastSpokenText && (
+            <div className="min-w-0 truncate text-[11px] text-[#CFEAE0]/75 max-w-full sm:max-w-md">
+              <span className="font-semibold text-[#CFEAE0]/90">Announcer:</span>{' '}
+              <span>{announcerStatus.lastSpokenText}</span>
+            </div>
+          )}
         </div>
       </div>
 
