@@ -61,6 +61,7 @@ export default function App() {
     joinRoomByCode,
     leaveRoom,
     sendMessage,
+    addVoiceListener,
     manualReconnect,
   } = useAuctionSocket({
     onRoomJoined: handleRoomJoined,
@@ -217,9 +218,11 @@ export default function App() {
           state={roomState}
           clientId={clientId}
           clockOffsetMs={clockOffsetMs}
+          wsConnected={status === 'connected'}
           muted={muted}
           reducedMotion={reducedMotion}
           onSend={sendMessage}
+          addVoiceListener={addVoiceListener}
           onLeave={handleLeaveRoom}
         />
       );

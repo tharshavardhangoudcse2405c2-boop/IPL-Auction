@@ -383,6 +383,28 @@ export function evaluateTeamBidEligibility(
   return { canBid: true, reason: null, nextBid, maxAffordable };
 }
 
+export interface VoicePeerState {
+  clientId: string;
+  name: string;
+  teamShortCode: string | null;
+  joined: boolean;
+  micActive: boolean;
+  speaking: boolean;
+}
+
+export type VoiceSignalPayload =
+  | { kind: 'offer'; sdp: string }
+  | { kind: 'answer'; sdp: string }
+  | {
+      kind: 'ice';
+      candidate: {
+        candidate: string;
+        sdpMid?: string | null;
+        sdpMLineIndex?: number | null;
+        usernameFragment?: string | null;
+      };
+    };
+
 export type ClientMessage =
   | { type: 'room:create'; clientName: string; clientId: string; sessionToken?: string; config: AuctionConfig; customTeams?: Partial<Team>[] }
   | { type: 'room:join'; roomCode: string; clientName: string; clientId: string; sessionToken?: string }
@@ -403,6 +425,8 @@ export type ClientMessage =
   | { type: 'auction:next_lot' }
   | { type: 'auction:end_early' }
   | { type: 'auction:rematch'; keepSettings: boolean }
+  | { type: 'voice:presence'; joined: boolean; micActive: boolean; speaking: boolean }
+  | { type: 'voice:signal'; targetClientId: string; signal: VoiceSignalPayload }
   | { type: 'ping'; clientSentAt?: number };
 
 export type ServerMessage =
@@ -410,5 +434,7 @@ export type ServerMessage =
   | { type: 'room:state'; state: AuctionRoomState }
   | { type: 'bid:accepted'; teamId: string; amount: number; lotEndsAt: number; serverTime: number }
   | { type: 'bid:rejected'; reason: string; teamId: string }
+  | { type: 'voice:peers'; peers: VoicePeerState[] }
+  | { type: 'voice:signal'; fromClientId: string; signal: VoiceSignalPayload }
   | { type: 'room:error'; message: string; code?: string }
   | { type: 'pong'; serverTime: number; clientSentAt?: number };

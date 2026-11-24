@@ -34,7 +34,13 @@ import {
   type RoomRuntime,
 } from './src/server/auctionEngine.ts';
 import { REAL_PLAYER_POOL } from './src/shared/data.ts';
-import type { ClientMessage, PlayerRole, ServerMessage } from './src/shared/types.ts';
+import type {
+  ClientMessage,
+  PlayerRole,
+  ServerMessage,
+  VoicePeerState,
+  VoiceSignalPayload,
+} from './src/shared/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +123,7 @@ async function restoreRoomsSnapshot(): Promise<void> {
         sessionTokens: new Map(Array.isArray(rec.sessionTokens) ? rec.sessionTokens : []),
         botLotValuations: new Map(),
         botReadyAt: new Map(),
+        voicePeers: new Map(),
         autoAdvanceAt: rec.autoAdvanceAt ?? null,
         lastTickAt: now,
       };
@@ -274,6 +281,65 @@ function broadcastRoomState(roomCode: string): void {
   schedulePersistRooms();
 }
 
+function buildVoicePeersList(runtime: RoomRuntime): VoicePeerState[] {
+  const peers: VoicePeerState[] = [];
+  for (const participant of runtime.state.participants) {
+    if (!participant.connected) continue;
+    const team = runtime.state.teams.find((t) => t.ownerClientId === participant.clientId);
+    const voice = runtime.voicePeers.get(participant.clientId);
+    peers.push({
+      clientId: participant.clientId,
+      name: participant.name,
+      teamShortCode: team?.shortCode ?? null,
+      joined: Boolean(voice?.joined),
+      micActive: Boolean(voice?.micActive),
+      speaking: Boolean(voice?.micActive && voice?.speaking),
+    });
+  }
+  return peers;
+}
+
+function broadcastVoicePeers(roomCode: string): void {
+  const runtime = rooms.get(roomCode);
+  if (!runtime) return;
+  const payload = JSON.stringify({
+    type: 'voice:peers',
+    peers: buildVoicePeersList(runtime),
+  } satisfies ServerMessage);
+
+  for (const meta of socketMetas.values()) {
+    if (meta.roomCode === roomCode && meta.ws.readyState === WebSocket.OPEN) {
+      meta.ws.send(payload);
+    }
+  }
+}
+
+function sanitizeVoiceSignal(raw: unknown): VoiceSignalPayload | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if ((obj.kind === 'offer' || obj.kind === 'answer') && typeof obj.sdp === 'string' && obj.sdp.length <= 32768) {
+    return { kind: obj.kind, sdp: obj.sdp };
+  }
+  if (obj.kind === 'ice' && obj.candidate && typeof obj.candidate === 'object' && !Array.isArray(obj.candidate)) {
+    const c = obj.candidate as Record<string, unknown>;
+    if (typeof c.candidate !== 'string' || c.candidate.length > 2048) return null;
+    return {
+      kind: 'ice',
+      candidate: {
+        candidate: c.candidate,
+        sdpMid: typeof c.sdpMid === 'string' || c.sdpMid === null ? c.sdpMid : undefined,
+        sdpMLineIndex:
+          typeof c.sdpMLineIndex === 'number' && Number.isFinite(c.sdpMLineIndex)
+            ? c.sdpMLineIndex
+            : undefined,
+        usernameFragment:
+          typeof c.usernameFragment === 'string' || c.usernameFragment === null ? c.usernameFragment : undefined,
+      },
+    };
+  }
+  return null;
+}
+
 function detachSocketFromRoom(meta: SocketMeta): void {
   const prevCode = meta.roomCode;
   const prevClientId = meta.clientId;
@@ -290,7 +356,9 @@ function detachSocketFromRoom(meta: SocketMeta): void {
         );
         if (!hasAnother) {
           participant.connected = false;
+          runtime.voicePeers.delete(prevClientId);
           broadcastRoomState(prevCode);
+          broadcastVoicePeers(prevCode);
         }
       }
     }
@@ -485,7 +553,11 @@ async function startServer(): Promise<void> {
           sessionToken,
           state: runtime.state,
         });
-        schedulePersistRooms();
+        sendToSocket(ws, {
+          type: 'voice:peers',
+          peers: buildVoicePeersList(runtime),
+        });
+        void writeRoomsSnapshot();
         return;
       }
 
@@ -537,6 +609,7 @@ async function startServer(): Promise<void> {
           state: runtime.state,
         });
         broadcastRoomState(code);
+        broadcastVoicePeers(code);
         return;
       }
 
@@ -609,7 +682,10 @@ async function startServer(): Promise<void> {
         case 'auction:start': {
           const err = startAuction(runtime, clientId);
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
-          else broadcastRoomState(roomCode);
+          else {
+            broadcastRoomState(roomCode);
+            void writeRoomsSnapshot();
+          }
           break;
         }
         case 'auction:bid': {
@@ -720,7 +796,42 @@ async function startServer(): Promise<void> {
         case 'auction:rematch': {
           const err = rematchRoom(runtime, clientId, Boolean(msg.keepSettings));
           if (err) sendToSocket(ws, { type: 'room:error', message: err });
-          else broadcastRoomState(roomCode);
+          else {
+            broadcastRoomState(roomCode);
+            void writeRoomsSnapshot();
+          }
+          break;
+        }
+        case 'voice:presence': {
+          const joined = Boolean(msg.joined);
+          const micActive = joined && Boolean(msg.micActive);
+          const speaking = micActive && Boolean(msg.speaking);
+          if (!joined) {
+            runtime.voicePeers.delete(clientId);
+          } else {
+            runtime.voicePeers.set(clientId, { joined: true, micActive, speaking });
+          }
+          broadcastVoicePeers(roomCode);
+          break;
+        }
+        case 'voice:signal': {
+          const targetClientId = typeof msg.targetClientId === 'string' ? msg.targetClientId.trim() : '';
+          if (!targetClientId || targetClientId === clientId) break;
+          const targetConnected = runtime.state.participants.some(
+            (p) => p.clientId === targetClientId && p.connected,
+          );
+          if (!targetConnected) break;
+          const signal = sanitizeVoiceSignal(msg.signal);
+          if (!signal) break;
+          for (const targetMeta of socketMetas.values()) {
+            if (targetMeta.roomCode === roomCode && targetMeta.clientId === targetClientId) {
+              sendToSocket(targetMeta.ws, {
+                type: 'voice:signal',
+                fromClientId: clientId,
+                signal,
+              });
+            }
+          }
           break;
         }
         default: {

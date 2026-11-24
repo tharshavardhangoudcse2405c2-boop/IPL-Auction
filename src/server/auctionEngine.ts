@@ -31,6 +31,7 @@ export interface RoomRuntime {
   sessionTokens: Map<string, string>; // clientId -> sessionToken
   botLotValuations: Map<string, { maxWilling: number; reason: string }>; // `${lotNumber}:${playerId}:${teamId}`
   botReadyAt: Map<string, number>; // teamId -> epoch ms when bot can place next bid
+  voicePeers: Map<string, { joined: boolean; micActive: boolean; speaking: boolean }>;
   autoAdvanceAt: number | null; // epoch ms during LOT_RESULT before opening next lot
   lastTickAt: number;
 }
@@ -250,6 +251,7 @@ export function createRoomRuntime(
     sessionTokens: new Map([[hostClientId, sessionToken]]),
     botLotValuations: new Map(),
     botReadyAt: new Map(),
+    voicePeers: new Map(),
     autoAdvanceAt: null,
     lastTickAt: now,
   };

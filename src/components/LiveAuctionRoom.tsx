@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   BarChart3,
   Clock,
   FastForward,
   Gavel,
+  Headphones,
+  Mic,
+  MicOff,
   Pause,
   Play,
   Plus,
+  Radio,
   RotateCcw,
   SkipForward,
   Undo2,
   Volume2,
   VolumeX,
+  X,
   XCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -33,6 +39,8 @@ import {
   playUnsoldSound,
   unlockAudio,
 } from '../client/audio.ts';
+import type { VoiceServerMessage } from '../client/useAuctionSocket.ts';
+import { useVoiceChat } from '../client/useVoiceChat.ts';
 import {
   evaluateTeamBidEligibility,
   formatLakhs,
@@ -55,9 +63,11 @@ interface LiveAuctionRoomProps {
   state: AuctionRoomState;
   clientId: string;
   clockOffsetMs: number;
+  wsConnected: boolean;
   muted: boolean;
   reducedMotion: boolean;
   onSend: (msg: ClientMessage) => void;
+  addVoiceListener: (listener: (msg: VoiceServerMessage) => void) => () => void;
   onLeave: () => void;
 }
 
@@ -67,9 +77,11 @@ export function LiveAuctionRoom({
   state,
   clientId,
   clockOffsetMs,
+  wsConnected,
   muted,
   reducedMotion,
   onSend,
+  addVoiceListener,
   onLeave,
 }: LiveAuctionRoomProps) {
   const [nowMs, setNowMs] = useState(() => Date.now() + clockOffsetMs);
@@ -81,6 +93,23 @@ export function LiveAuctionRoom({
   const [hoveredPlayerStats, setHoveredPlayerStats] = useState<HoveredPlayerStats | null>(null);
   const [announcerStatus, setAnnouncerStatus] = useState<AnnouncerStatus>(() =>
     auctionAnnouncer.getStatus(),
+  );
+
+  const voice = useVoiceChat({
+    enabled: true,
+    wsConnected,
+    roomCode: state.roomCode,
+    clientId,
+    onSend,
+    addVoiceListener,
+  });
+
+  const activeSpeakers = useMemo(
+    () =>
+      voice.voicePeers.filter(
+        (peer) => peer.speaking || (peer.clientId === clientId && (voice.isSpeaking || voice.isHoldTalking)),
+      ),
+    [voice.voicePeers, clientId, voice.isSpeaking, voice.isHoldTalking],
   );
 
   const prevBidIdRef = useRef<string | null>(state.currentLot?.bidHistory[0]?.id ?? null);
@@ -493,7 +522,7 @@ export function LiveAuctionRoom({
                   ) : (
                     <Volume2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   )}
-                  <span>{announcerStatus.muted ? 'Voice Muted' : 'Voice On'}</span>
+                  <span>{announcerStatus.muted ? 'Announcer Muted' : 'Announcer On'}</span>
                 </button>
 
                 <label className="inline-flex items-center gap-2 rounded-lg border border-[#5B91A3]/35 bg-[#131B2B] px-3 py-1.5">
@@ -548,6 +577,219 @@ export function LiveAuctionRoom({
             <div className="min-w-0 truncate text-[11px] text-[#CFEAE0]/75 max-w-full sm:max-w-md">
               <span className="font-semibold text-[#CFEAE0]/90">Announcer:</span>{' '}
               <span>{announcerStatus.lastSpokenText}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Real-Time Multi-User Voice Chat Controls (Mic Toggle + Push-to-Talk + Mute + Speakers) */}
+        <div className="flex flex-col gap-2.5 border-t border-[#CFEAE0]/15 pt-2.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 font-bold uppercase tracking-wider text-[11px] text-[#CFEAE0]/85 whitespace-nowrap">
+                <Radio className="h-3.5 w-3.5 text-[#5B91A3]" aria-hidden="true" />
+                Live Voice Chat
+              </span>
+
+              {/* Toggle Mic Button (Off by default; tap once ON, tap again OFF) */}
+              <button
+                type="button"
+                aria-pressed={voice.isMicOn}
+                aria-label={voice.isMicOn ? 'Turn microphone off' : 'Turn microphone on'}
+                onClick={() => {
+                  voice.unlockIncomingAudio();
+                  void voice.toggleMic();
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 sm:py-1.5 font-bold transition-colors whitespace-nowrap min-h-[38px] sm:min-h-0 ${
+                  voice.isMicOn
+                    ? 'border-emerald-400 bg-emerald-500 text-[#131B2B] hover:bg-emerald-400'
+                    : 'border-[#5B91A3]/45 bg-[#131B2B] text-[#CFEAE0]/85 hover:text-[#CFEAE0] hover:border-[#5B91A3]'
+                }`}
+              >
+                {voice.isMicOn ? (
+                  <Mic className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <MicOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                )}
+                <span>{voice.isMicOn ? 'Mic On' : 'Mic Off'}</span>
+              </button>
+
+              {/* Push-to-Talk Hold Button */}
+              <button
+                type="button"
+                aria-pressed={voice.isHoldTalking}
+                aria-label="Hold to talk to room participants"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {
+                    // Ignore capture fallback on older mobile browsers
+                  }
+                  voice.unlockIncomingAudio();
+                  void voice.startPushToTalk();
+                }}
+                onPointerUp={() => voice.stopPushToTalk()}
+                onPointerCancel={() => voice.stopPushToTalk()}
+                onLostPointerCapture={() => voice.stopPushToTalk()}
+                onKeyDown={(e) => {
+                  if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
+                    e.preventDefault();
+                    voice.unlockIncomingAudio();
+                    void voice.startPushToTalk();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === ' ' || e.key === 'Enter') {
+                    e.preventDefault();
+                    voice.stopPushToTalk();
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 sm:py-1.5 font-bold transition-colors whitespace-nowrap touch-none select-none min-h-[38px] sm:min-h-0 ${
+                  voice.isHoldTalking
+                    ? 'border-emerald-300 bg-emerald-400 text-[#131B2B] shadow-sm'
+                    : 'border-[#5B91A3]/45 bg-[#131B2B] text-[#CFEAE0]/90 hover:border-[#CFEAE0] hover:text-[#CFEAE0]'
+                }`}
+              >
+                <Mic className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{voice.isHoldTalking ? 'Talking...' : 'Hold to Talk'}</span>
+              </button>
+
+              {/* Mute / Unmute Incoming Participants Audio */}
+              <button
+                type="button"
+                aria-pressed={voice.isIncomingMuted}
+                aria-label={voice.isIncomingMuted ? 'Unmute participants voice chat' : 'Mute participants voice chat'}
+                onClick={() => {
+                  voice.unlockIncomingAudio();
+                  voice.toggleIncomingMute();
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 sm:py-1.5 font-bold transition-colors whitespace-nowrap min-h-[38px] sm:min-h-0 ${
+                  voice.isIncomingMuted
+                    ? 'border-rose-400/50 bg-rose-950/60 text-rose-200 hover:bg-rose-950/80'
+                    : 'border-[#5B91A3]/45 bg-[#131B2B] text-[#CFEAE0]/85 hover:text-[#CFEAE0]'
+                }`}
+              >
+                {voice.isIncomingMuted ? (
+                  <VolumeX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <Headphones className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                )}
+                <span>{voice.isIncomingMuted ? 'Chat Muted' : 'Chat Audio On'}</span>
+              </button>
+
+              {voice.autoplayBlocked && !voice.isIncomingMuted && (
+                <button
+                  type="button"
+                  onClick={() => voice.unlockIncomingAudio()}
+                  className="rounded-lg border border-amber-300/60 bg-amber-950/60 px-2.5 py-1.5 text-[11px] font-bold text-amber-200 hover:bg-amber-950/85 whitespace-nowrap"
+                >
+                  Tap to Enable Voice Audio
+                </button>
+              )}
+
+              {/* Live local mic input level bar when transmitting */}
+              {voice.isTransmitting && (
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-[#131B2B] px-2.5 py-1.5"
+                  aria-label="Microphone transmission level"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                  <div className="h-1.5 w-14 overflow-hidden rounded-full bg-[#2F4A63]">
+                    <div
+                      className="h-full rounded-full bg-emerald-400 transition-all duration-100"
+                      style={{ width: `${Math.max(12, Math.round(voice.micLevel * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Who is Speaking Readout */}
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              {voice.permissionState === 'requesting' ? (
+                <span className="rounded-lg border border-amber-300/45 bg-amber-950/50 px-2.5 py-1 font-semibold text-amber-200">
+                  Requesting microphone permission...
+                </span>
+              ) : activeSpeakers.length > 0 ? (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/50 bg-emerald-950/55 px-2.5 py-1 font-bold text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                  Speaking:{' '}
+                  {activeSpeakers
+                    .map((p) => (p.teamShortCode ? `${p.name} (${p.teamShortCode})` : p.name))
+                    .join(', ')}
+                </span>
+              ) : (
+                <span className="text-[#CFEAE0]/70">
+                  {voice.voicePeers.length > 1
+                    ? `${voice.voicePeers.length} connected in voice room · Nobody speaking`
+                    : voice.isTransmitting
+                      ? 'Mic live — waiting for audio input'
+                      : 'Mic off · Tap Mic Off or hold Hold to Talk'}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Connected Voice Room Participants */}
+          {voice.voicePeers.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {voice.voicePeers.map((peer) => {
+                const isSelf = peer.clientId === clientId;
+                const peerSpeaking =
+                  peer.speaking || (isSelf && (voice.isSpeaking || voice.isHoldTalking));
+                const peerMicOn = peer.micActive || (isSelf && voice.isTransmitting);
+                return (
+                  <span
+                    key={peer.clientId}
+                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+                      peerSpeaking
+                        ? 'border-emerald-400/70 bg-emerald-950/60 text-emerald-200'
+                        : peerMicOn
+                          ? 'border-[#5B91A3]/60 bg-[#131B2B] text-[#CFEAE0]'
+                          : 'border-[#5B91A3]/25 bg-[#131B2B]/70 text-[#CFEAE0]/70'
+                    }`}
+                  >
+                    {peerMicOn ? (
+                      <Mic
+                        className={`h-3 w-3 shrink-0 ${peerSpeaking ? 'text-emerald-300' : 'text-[#5B91A3]'}`}
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <MicOff className="h-3 w-3 shrink-0 text-[#CFEAE0]/45" aria-hidden="true" />
+                    )}
+                    <span>
+                      {peer.name}
+                      {isSelf ? ' (You)' : ''}
+                      {peer.teamShortCode ? ` · ${peer.teamShortCode}` : ''}
+                    </span>
+                    <span className="text-[10px] opacity-80">
+                      {peerSpeaking ? 'Speaking' : peerMicOn ? 'Mic On' : 'Listening'}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Microphone Permission / Availability Help Alert */}
+          {voice.errorMessage && (
+            <div
+              role="alert"
+              className="flex items-start justify-between gap-3 rounded-lg border border-rose-400/45 bg-rose-950/65 px-3 py-2 text-xs text-rose-100"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" aria-hidden="true" />
+                <span className="leading-relaxed">{voice.errorMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => voice.dismissError()}
+                aria-label="Dismiss microphone alert"
+                className="shrink-0 text-rose-200/80 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           )}
         </div>

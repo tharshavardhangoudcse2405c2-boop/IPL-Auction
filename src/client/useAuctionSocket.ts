@@ -7,6 +7,8 @@ import type {
   Team,
 } from '../shared/types.ts';
 
+export type VoiceServerMessage = Extract<ServerMessage, { type: 'voice:peers' | 'voice:signal' }>;
+
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 interface RoomSessionHint {
@@ -140,6 +142,7 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
   const intentionalCloseRef = useRef<boolean>(false);
   const onRoomJoinedRef = useRef(onRoomJoined);
   const onSoundEventRef = useRef(onSoundEvent);
+  const voiceListenersRef = useRef<Set<(msg: VoiceServerMessage) => void>>(new Set());
 
   useEffect(() => {
     onRoomJoinedRef.current = onRoomJoined;
@@ -287,6 +290,13 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
         if (msg.type === 'room:state') {
           setRoomState(msg.state);
           setClockOffsetMs(msg.state.serverTime - Date.now());
+          return;
+        }
+
+        if (msg.type === 'voice:peers' || msg.type === 'voice:signal') {
+          for (const listener of voiceListenersRef.current) {
+            listener(msg);
+          }
           return;
         }
 
@@ -443,6 +453,13 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
     connectSocket();
   }, [connectSocket]);
 
+  const addVoiceListener = useCallback((listener: (msg: VoiceServerMessage) => void) => {
+    voiceListenersRef.current.add(listener);
+    return () => {
+      voiceListenersRef.current.delete(listener);
+    };
+  }, []);
+
   return {
     status,
     roomState,
@@ -458,5 +475,6 @@ export function useAuctionSocket({ onRoomJoined, onSoundEvent }: UseAuctionSocke
     leaveRoom,
     sendMessage,
     manualReconnect,
+    addVoiceListener,
   };
 }
