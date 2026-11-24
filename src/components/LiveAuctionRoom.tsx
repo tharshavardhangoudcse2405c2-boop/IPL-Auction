@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BarChart3,
   Clock,
   FastForward,
   Gavel,
@@ -43,9 +44,11 @@ import {
   getTeamRoleCounts,
   type AuctionRoomState,
   type ClientMessage,
+  type Player,
   type Team,
 } from '../shared/types.ts';
 import { PlayerAvatar } from './PlayerAvatar.tsx';
+import { PlayerStatsTooltip, type HoveredPlayerStats } from './PlayerStatsTooltip.tsx';
 import { TeamCrest } from './TeamCrest.tsx';
 
 interface LiveAuctionRoomProps {
@@ -75,6 +78,7 @@ export function LiveAuctionRoom({
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [pendingBidKey, setPendingBidKey] = useState<string | null>(null);
   const [showAllQueue, setShowAllQueue] = useState(false);
+  const [hoveredPlayerStats, setHoveredPlayerStats] = useState<HoveredPlayerStats | null>(null);
   const [announcerStatus, setAnnouncerStatus] = useState<AnnouncerStatus>(() =>
     auctionAnnouncer.getStatus(),
   );
@@ -357,8 +361,48 @@ export function LiveAuctionRoom({
   const setProgressPct =
     totalInSet > 0 ? Math.min(100, Math.round((auctionedInSet / totalInSet) * 100)) : 0;
 
+  const showPlayerStats = (player: Player, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    setHoveredPlayerStats({
+      player,
+      anchorRect: {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      },
+    });
+  };
+
+  const hidePlayerStats = () => {
+    setHoveredPlayerStats(null);
+  };
+
+  useEffect(() => {
+    setHoveredPlayerStats(null);
+  }, [lot?.lotNumber, lot?.player.id, state.phase, deskTab, inspectedTeamId]);
+
+  useEffect(() => {
+    const dismiss = () => setHoveredPlayerStats(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismiss();
+    };
+    window.addEventListener('scroll', dismiss, true);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 space-y-5">
+      <PlayerStatsTooltip hovered={hoveredPlayerStats} />
+
       {/* Screen-reader live announcement region synced with confirmed auction events */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {announcerStatus.lastSpokenText}
@@ -516,16 +560,48 @@ export function LiveAuctionRoom({
           {lot ? (
             <div className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-5 sm:p-6 space-y-5 shadow-xl">
               <div className="flex flex-col sm:flex-row gap-6 items-start">
-                <PlayerAvatar player={lot.player} size="hero" />
+                <div
+                  tabIndex={0}
+                  onMouseEnter={(e) => showPlayerStats(lot.player, e.currentTarget)}
+                  onMouseLeave={hidePlayerStats}
+                  onFocus={(e) => showPlayerStats(lot.player, e.currentTarget)}
+                  onBlur={hidePlayerStats}
+                  className="shrink-0 w-full sm:w-auto cursor-help rounded-xl focus:outline-none focus:ring-2 focus:ring-[#5B91A3]"
+                >
+                  <PlayerAvatar player={lot.player} size="hero" />
+                </div>
 
                 <div className="min-w-0 flex-1 space-y-4 w-full">
                   <div>
                     <div className="text-xs font-bold tracking-wider text-[#CFEAE0]/80 uppercase">
                       {lot.player.set} Set · {lot.player.specialty}
                     </div>
-                    <h1 className="mt-1 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#CFEAE0] leading-tight">
-                      {lot.player.name}
-                    </h1>
+                    <div className="mt-1 flex flex-wrap items-center gap-2.5">
+                      <h1
+                        onMouseEnter={(e) => showPlayerStats(lot.player, e.currentTarget)}
+                        onMouseLeave={hidePlayerStats}
+                        className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#CFEAE0] leading-tight cursor-help"
+                      >
+                        {lot.player.name}
+                      </h1>
+                      <button
+                        type="button"
+                        onMouseEnter={(e) => showPlayerStats(lot.player, e.currentTarget)}
+                        onMouseLeave={hidePlayerStats}
+                        onFocus={(e) => showPlayerStats(lot.player, e.currentTarget)}
+                        onBlur={hidePlayerStats}
+                        onClick={(e) =>
+                          hoveredPlayerStats?.player.id === lot.player.id
+                            ? hidePlayerStats()
+                            : showPlayerStats(lot.player, e.currentTarget)
+                        }
+                        aria-label={`View quick stats for ${lot.player.name}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-[#5B91A3]/55 bg-[#131B2B]/85 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-[#CFEAE0] hover:border-[#CFEAE0] hover:bg-[#1B293D]"
+                      >
+                        <BarChart3 className="h-3.5 w-3.5 text-[#5B91A3]" aria-hidden="true" />
+                        Stats
+                      </button>
+                    </div>
                     <div className="mt-2.5 rounded-lg border border-[#5B91A3]/25 bg-[#131B2B]/70 px-3 py-2 space-y-1.5">
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="font-semibold text-[#CFEAE0]/85">
@@ -805,7 +881,16 @@ export function LiveAuctionRoom({
               }`}
             >
               <div className="flex flex-col items-center gap-4">
-                <PlayerAvatar player={outcome.player} size="md" />
+                <div
+                  tabIndex={0}
+                  onMouseEnter={(e) => showPlayerStats(outcome.player, e.currentTarget)}
+                  onMouseLeave={hidePlayerStats}
+                  onFocus={(e) => showPlayerStats(outcome.player, e.currentTarget)}
+                  onBlur={hidePlayerStats}
+                  className="cursor-help rounded-xl focus:outline-none focus:ring-2 focus:ring-[#5B91A3]"
+                >
+                  <PlayerAvatar player={outcome.player} size="md" />
+                </div>
                 <div className="space-y-1">
                   <div
                     className={`inline-flex items-center gap-2 font-display text-4xl sm:text-5xl font-extrabold tracking-wider uppercase ${
@@ -815,7 +900,11 @@ export function LiveAuctionRoom({
                     <Gavel className="h-8 w-8" aria-hidden="true" />
                     {outcome.status === 'SOLD' ? 'SOLD!' : 'UNSOLD'}
                   </div>
-                  <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#CFEAE0]">
+                  <h2
+                    onMouseEnter={(e) => showPlayerStats(outcome.player, e.currentTarget)}
+                    onMouseLeave={hidePlayerStats}
+                    className="font-display text-2xl sm:text-3xl font-bold text-[#CFEAE0] cursor-help"
+                  >
                     {outcome.player.name}
                   </h2>
                   <p className="text-sm text-[#CFEAE0]/80">
@@ -953,7 +1042,12 @@ export function LiveAuctionRoom({
                     {inspectedTeam.squad.map((item) => (
                       <div
                         key={item.player.id}
-                        className="flex items-center justify-between rounded-lg border border-[#5B91A3]/25 bg-[#2F4A63]/55 px-3 py-2 text-xs"
+                        tabIndex={0}
+                        onMouseEnter={(e) => showPlayerStats(item.player, e.currentTarget)}
+                        onMouseLeave={hidePlayerStats}
+                        onFocus={(e) => showPlayerStats(item.player, e.currentTarget)}
+                        onBlur={hidePlayerStats}
+                        className="flex items-center justify-between rounded-lg border border-[#5B91A3]/25 bg-[#2F4A63]/55 px-3 py-2 text-xs cursor-help hover:border-[#5B91A3]/65 focus:outline-none focus:ring-2 focus:ring-[#5B91A3]"
                       >
                         <div className="min-w-0">
                           <div className="truncate font-semibold text-[#CFEAE0]">{item.player.name}</div>
@@ -1196,9 +1290,16 @@ export function LiveAuctionRoom({
                     state.unsoldPool.map((p) => (
                       <div
                         key={p.id}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-[#5B91A3]/25 bg-[#131B2B] px-3 py-2 text-xs"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[#5B91A3]/25 bg-[#131B2B] px-3 py-2 text-xs hover:border-[#5B91A3]/65"
                       >
-                        <div className="min-w-0">
+                        <div
+                          tabIndex={0}
+                          onMouseEnter={(e) => showPlayerStats(p, e.currentTarget)}
+                          onMouseLeave={hidePlayerStats}
+                          onFocus={(e) => showPlayerStats(p, e.currentTarget)}
+                          onBlur={hidePlayerStats}
+                          className="min-w-0 flex-1 cursor-help rounded focus:outline-none focus:ring-2 focus:ring-[#5B91A3]"
+                        >
                           <div className="truncate font-semibold text-[#CFEAE0]">{p.name}</div>
                           <div className="text-[#CFEAE0]/70">
                             {p.role} · {p.nationality} · Base {formatLakhs(p.basePrice)}
@@ -1231,7 +1332,12 @@ export function LiveAuctionRoom({
                       {(showAllQueue ? state.playerQueue : state.playerQueue.slice(0, 40)).map((p, idx) => (
                         <div
                           key={p.id}
-                          className="flex items-center justify-between rounded-lg border border-[#5B91A3]/25 bg-[#131B2B] px-3 py-2 text-xs"
+                          tabIndex={0}
+                          onMouseEnter={(e) => showPlayerStats(p, e.currentTarget)}
+                          onMouseLeave={hidePlayerStats}
+                          onFocus={(e) => showPlayerStats(p, e.currentTarget)}
+                          onBlur={hidePlayerStats}
+                          className="flex items-center justify-between rounded-lg border border-[#5B91A3]/25 bg-[#131B2B] px-3 py-2 text-xs cursor-help hover:border-[#5B91A3]/65 focus:outline-none focus:ring-2 focus:ring-[#5B91A3]"
                         >
                           <div className="min-w-0">
                             <div className="truncate font-semibold text-[#CFEAE0]">
