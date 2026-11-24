@@ -6,6 +6,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { generateAuctionWinnerAnalysis } from './src/server/aiAnalysis.ts';
+import {
+  AuthError,
+  authenticateCookieHeader,
+  clearSessionCookie,
+  getAuthConfigurationSummary,
+  getSessionTokenHashFromCookie,
+  requestOtpChallenge,
+  revokeSessionFromCookieHeader,
+  setSessionCookie,
+  updateAuthenticatedDisplayName,
+  verifyCsrfOrOrigin,
+  verifyOtpChallenge,
+  verifyUpgradeOrigin,
+  type AuthenticatedUser,
+} from './src/server/auth.ts';
+import {
+  DatabaseNotConfiguredError,
+  cleanupExpiredAuthRecords,
+  ensureAuthSchema,
+  isDatabaseConfigured,
+} from './src/server/db.ts';
+import { OtpDeliveryError } from './src/server/otpProviders.ts';
 import { VERIFIED_PHOTO_URLS } from './src/server/verifiedPhotos.ts';
 import {
   claimTeam,
@@ -24,7 +46,6 @@ import {
   resumeAuction,
   startAuction,
   tickRoom,
-  timingSafeTokenEquals,
   toggleParticipantReady,
   undoLastBid,
   updateLobbyConfig,
@@ -44,6 +65,9 @@ interface SocketMeta {
   ws: WebSocket;
   roomCode: string | null;
   clientId: string | null;
+  userId: string;
+  userDisplayName: string;
+  sessionTokenHash: string | null;
 }
 
 interface CachedPhoto {
@@ -232,23 +256,185 @@ function allocateUniqueRoomCode(): string {
 }
 
 async function startServer(): Promise<void> {
+  if (isDatabaseConfigured()) {
+    try {
+      await ensureAuthSchema();
+      await cleanupExpiredAuthRecords();
+      console.log('Real Auction 26 PostgreSQL auth schema ready.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('Warning: PostgreSQL auth schema initialization deferred:', msg);
+    }
+  } else {
+    console.warn('Auth setup notice: DATABASE_URL is not configured yet. Configure Render PostgreSQL to enable login.');
+  }
+
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '256kb' }));
 
+  const sendAuthError = (res: express.Response, err: unknown) => {
+    if (err instanceof AuthError || err instanceof DatabaseNotConfiguredError || err instanceof OtpDeliveryError) {
+      res.status(err.status).json({
+        ok: false,
+        code: err.code,
+        message: err.message,
+        ...(err instanceof AuthError && err.retryAfterSeconds
+          ? { retryAfterSeconds: err.retryAfterSeconds }
+          : {}),
+      });
+      return;
+    }
+    res.status(500).json({
+      ok: false,
+      code: 'INTERNAL_ERROR',
+      message: 'Authentication service encountered an unexpected error. Please try again.',
+    });
+  };
+
+  const requireCsrf = (req: express.Request, res: express.Response): boolean => {
+    if (!verifyCsrfOrOrigin(req)) {
+      res.status(403).json({
+        ok: false,
+        code: 'CSRF_BLOCKED',
+        message: 'Request origin verification failed.',
+      });
+      return false;
+    }
+    return true;
+  };
+
+  const requireAuthenticatedUser = async (
+    req: express.Request,
+    res: express.Response,
+  ): Promise<AuthenticatedUser | null> => {
+    const user = await authenticateCookieHeader(req.headers.cookie);
+    if (!user) {
+      res.status(401).json({
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        message: 'Sign in with email or phone OTP to continue.',
+      });
+      return null;
+    }
+    return user;
+  };
+
   app.get('/api/health', (_req, res) => {
     const geminiKey = process.env.GEMINI_API_KEY?.trim();
+    const authConfig = getAuthConfigurationSummary();
     res.json({
       ok: true,
       app: 'Real Auction 26',
       activeRooms: rooms.size,
       geminiConfigured: Boolean(geminiKey && geminiKey !== 'MY_GEMINI_API_KEY'),
+      auth: {
+        database: authConfig.database,
+        authSecret: authConfig.authSecret,
+        email: authConfig.email,
+        sms: authConfig.sms,
+      },
       pool: getFullPlayerPoolSummary(),
       serverTime: Date.now(),
     });
   });
 
-  app.get('/api/rooms/:code', (req, res) => {
+  app.get('/api/auth/me', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const providers = getAuthConfigurationSummary();
+    const user = await authenticateCookieHeader(req.headers.cookie);
+    res.json({
+      ok: true,
+      authenticated: Boolean(user),
+      user,
+      providers,
+    });
+  });
+
+  app.post('/api/auth/request-otp', async (req, res) => {
+    if (!requireCsrf(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+    try {
+      const result = await requestOtpChallenge(req, body.channel, body.target);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      sendAuthError(res, err);
+    }
+  });
+
+  app.post('/api/auth/verify-otp', async (req, res) => {
+    if (!requireCsrf(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+    try {
+      const { user, rawToken } = await verifyOtpChallenge(
+        req,
+        body.channel,
+        body.target,
+        body.code,
+        body.displayName,
+      );
+      setSessionCookie(req, res, rawToken);
+      res.json({ ok: true, user });
+    } catch (err) {
+      sendAuthError(res, err);
+    }
+  });
+
+  app.patch('/api/auth/profile', async (req, res) => {
+    if (!requireCsrf(req, res)) return;
+    const authUser = await requireAuthenticatedUser(req, res);
+    if (!authUser) return;
+    res.setHeader('Cache-Control', 'no-store');
+    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+    try {
+      const updated = await updateAuthenticatedDisplayName(authUser.id, body.displayName);
+      for (const [code, runtime] of rooms.entries()) {
+        let updatedRoom = false;
+        for (const p of runtime.state.participants) {
+          if (p.userId === updated.id) {
+            p.name = updated.displayName;
+            updatedRoom = true;
+            for (const team of runtime.state.teams) {
+              if (team.ownerClientId === p.clientId) {
+                team.ownerName = updated.displayName;
+              }
+            }
+          }
+        }
+        if (updatedRoom) {
+          broadcastRoomState(code);
+        }
+      }
+      res.json({ ok: true, user: updated });
+    } catch (err) {
+      sendAuthError(res, err);
+    }
+  });
+
+  app.post('/api/auth/logout', async (req, res) => {
+    if (!requireCsrf(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    const tokenHash = getSessionTokenHashFromCookie(req.headers.cookie);
+    await revokeSessionFromCookieHeader(req.headers.cookie);
+    clearSessionCookie(req, res);
+
+    if (tokenHash) {
+      for (const meta of Array.from(socketMetas.values())) {
+        if (meta.sessionTokenHash === tokenHash) {
+          meta.ws.close(4401, 'Session signed out');
+        }
+      }
+    }
+
+    res.json({ ok: true });
+  });
+
+  app.get('/api/rooms/:code', async (req, res) => {
+    const authUser = await requireAuthenticatedUser(req, res);
+    if (!authUser) return;
+
     const code = String(req.params.code || '').trim().toUpperCase();
     const runtime = rooms.get(code);
     if (!runtime) {
@@ -266,6 +452,10 @@ async function startServer(): Promise<void> {
   });
 
   app.post('/api/rooms/:code/ai-analysis', async (req, res) => {
+    if (!requireCsrf(req, res)) return;
+    const authUser = await requireAuthenticatedUser(req, res);
+    if (!authUser) return;
+
     const code = String(req.params.code || '').trim().toUpperCase();
     const runtime = rooms.get(code);
     if (!runtime) {
@@ -273,17 +463,7 @@ async function startServer(): Promise<void> {
       return;
     }
 
-    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
-    const clientId = String(body.clientId || req.headers['x-room-client-id'] || '').trim();
-    const sessionToken = String(body.sessionToken || req.headers['x-room-session-token'] || '').trim();
-    const expectedToken = clientId ? runtime.sessionTokens.get(clientId) : undefined;
-    const isParticipant = Boolean(
-      clientId &&
-        expectedToken &&
-        sessionToken &&
-        timingSafeTokenEquals(sessionToken, expectedToken) &&
-        runtime.state.participants.some((p) => p.clientId === clientId),
-    );
+    const isParticipant = runtime.state.participants.some((p) => p.userId === authUser.id);
     if (!isParticipant) {
       res.status(403).json({
         ok: false,
@@ -343,10 +523,64 @@ async function startServer(): Promise<void> {
   });
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({ noServer: true });
+  const upgradeAuthMap = new WeakMap<
+    http.IncomingMessage,
+    { user: AuthenticatedUser; sessionTokenHash: string | null }
+  >();
 
-  wss.on('connection', (ws) => {
-    const meta: SocketMeta = { ws, roomCode: null, clientId: null };
+  server.on('upgrade', async (req, socket, head) => {
+    let pathname = '/';
+    try {
+      pathname = new URL(req.url || '/', 'http://localhost').pathname;
+    } catch {
+      socket.destroy();
+      return;
+    }
+
+    if (pathname !== '/ws') {
+      if (isProduction) {
+        socket.destroy();
+      }
+      return;
+    }
+
+    if (!verifyUpgradeOrigin(req)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const authUser = await authenticateCookieHeader(req.headers.cookie);
+    if (!authUser) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const sessionTokenHash = getSessionTokenHashFromCookie(req.headers.cookie);
+    upgradeAuthMap.set(req, { user: authUser, sessionTokenHash });
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  });
+
+  wss.on('connection', (ws, req) => {
+    const authData = upgradeAuthMap.get(req);
+    upgradeAuthMap.delete(req);
+    if (!authData) {
+      ws.close(4401, 'Authentication required');
+      return;
+    }
+    const { user: authUser, sessionTokenHash } = authData;
+    const meta: SocketMeta = {
+      ws,
+      roomCode: null,
+      clientId: null,
+      userId: authUser.id,
+      userDisplayName: authUser.displayName,
+      sessionTokenHash,
+    };
     socketMetas.set(ws, meta);
 
     ws.on('message', (rawData) => {
@@ -381,12 +615,16 @@ async function startServer(): Promise<void> {
       if (msg.type === 'room:create') {
         detachSocketFromRoom(meta);
         const code = allocateUniqueRoomCode();
-        const clientName = typeof msg.clientName === 'string' ? msg.clientName.slice(0, 32) : 'Auctioneer';
+        const clientName =
+          typeof msg.clientName === 'string' && msg.clientName.trim()
+            ? msg.clientName.slice(0, 32)
+            : meta.userDisplayName;
         const configObj = msg.config && typeof msg.config === 'object' ? msg.config : {};
         const customTeams = Array.isArray(msg.customTeams) ? msg.customTeams.slice(0, 12) : undefined;
 
         const { runtime, hostClientId, sessionToken } = createRoomRuntime(
           code,
+          meta.userId,
           clientName,
           configObj,
           customTeams,
@@ -429,11 +667,20 @@ async function startServer(): Promise<void> {
 
         detachSocketFromRoom(meta);
 
-        const clientName = typeof msg.clientName === 'string' ? msg.clientName.slice(0, 32) : 'Manager';
+        const clientName =
+          typeof msg.clientName === 'string' && msg.clientName.trim()
+            ? msg.clientName.slice(0, 32)
+            : meta.userDisplayName;
         const incomingClientId = typeof msg.clientId === 'string' ? msg.clientId.slice(0, 64) : undefined;
         const incomingToken = typeof msg.sessionToken === 'string' ? msg.sessionToken.slice(0, 128) : undefined;
 
-        const { sessionToken, participant } = joinRoom(runtime, incomingClientId, clientName, incomingToken);
+        const { sessionToken, participant } = joinRoom(
+          runtime,
+          meta.userId,
+          incomingClientId,
+          clientName,
+          incomingToken,
+        );
 
         meta.roomCode = code;
         meta.clientId = participant.clientId;
@@ -658,6 +905,10 @@ async function startServer(): Promise<void> {
       }
     }
   }, 250);
+
+  setInterval(() => {
+    void cleanupExpiredAuthRecords();
+  }, 60 * 60 * 1000);
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'API endpoint not found.' });

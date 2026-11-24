@@ -200,6 +200,7 @@ export function sanitizeConfig(raw: Partial<AuctionConfig>): AuctionConfig {
 
 export function createRoomRuntime(
   roomCode: string,
+  hostUserId: string,
   hostName: string,
   rawConfig: Partial<AuctionConfig>,
   customTeams?: Partial<Team>[],
@@ -215,6 +216,7 @@ export function createRoomRuntime(
 
   const hostParticipant: Participant = {
     clientId: hostClientId,
+    userId: hostUserId,
     name: safeHostName,
     isHost: true,
     connected: true,
@@ -259,6 +261,7 @@ export function createRoomRuntime(
 
 export function joinRoom(
   runtime: RoomRuntime,
+  userId: string,
   incomingClientId: string | undefined,
   clientName: string,
   incomingToken?: string,
@@ -266,10 +269,43 @@ export function joinRoom(
   const state = runtime.state;
   const now = Date.now();
 
+  // Strictly restore participant by authenticated account userId first so team ownership
+  // and host role survive browser restarts/devices and cannot be hijacked by another user.
+  const existingByUser = state.participants.find((p) => p.userId === userId);
+  if (existingByUser) {
+    existingByUser.connected = true;
+    if (clientName.trim()) {
+      existingByUser.name = clientName.trim().slice(0, 32);
+    }
+    for (const t of state.teams) {
+      if (t.ownerClientId === existingByUser.clientId) {
+        t.ownerName = existingByUser.name;
+      }
+    }
+
+    let token = runtime.sessionTokens.get(existingByUser.clientId);
+    if (!token) {
+      token = crypto.randomBytes(24).toString('hex');
+      runtime.sessionTokens.set(existingByUser.clientId, token);
+    }
+
+    pushEvent(state, {
+      type: 'info',
+      message: `${existingByUser.name} reconnected to the room.`,
+    });
+    return { sessionToken: token, participant: existingByUser, reconnected: true };
+  }
+
+  // Fallback token match only if the existing participant belongs to the same authenticated userId
   if (incomingClientId && incomingToken) {
     const expectedToken = runtime.sessionTokens.get(incomingClientId);
     const existing = state.participants.find((p) => p.clientId === incomingClientId);
-    if (existing && expectedToken && timingSafeTokenEquals(incomingToken, expectedToken)) {
+    if (
+      existing &&
+      existing.userId === userId &&
+      expectedToken &&
+      timingSafeTokenEquals(incomingToken, expectedToken)
+    ) {
       existing.connected = true;
       if (clientName.trim()) {
         existing.name = clientName.trim().slice(0, 32);
@@ -295,6 +331,7 @@ export function joinRoom(
 
   const participant: Participant = {
     clientId: safeClientId,
+    userId,
     name: cleanName,
     isHost: false,
     connected: true,

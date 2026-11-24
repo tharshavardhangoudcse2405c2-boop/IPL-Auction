@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, WifiOff, X } from 'lucide-react';
+import { LogOut, RefreshCw, WifiOff, X } from 'lucide-react';
+import { apiFetch } from './client/api.ts';
 import {
   playClickSound,
   playRejectedSound,
@@ -10,6 +11,7 @@ import {
 import { useAppRouter } from './client/router.ts';
 import { useAuctionSocket } from './client/useAuctionSocket.ts';
 import { AuctionWinnerPage } from './components/AuctionWinnerPage.tsx';
+import { AuthGatePage } from './components/AuthGatePage.tsx';
 import { CreateAuctionPage } from './components/CreateAuctionPage.tsx';
 import { HomePage } from './components/HomePage.tsx';
 import { JoinRoomPage } from './components/JoinRoomPage.tsx';
@@ -18,11 +20,53 @@ import { LobbyRoom } from './components/LobbyRoom.tsx';
 import { PlayerPoolPage } from './components/PlayerPoolPage.tsx';
 import { ResultsSummary } from './components/ResultsSummary.tsx';
 import { RulesSetupPage } from './components/RulesSetupPage.tsx';
-import type { AuctionRoomState } from './shared/types.ts';
+import type { AuctionRoomState, AuthProvidersStatus, AuthUser } from './shared/types.ts';
+
+interface AuthMeResponse {
+  ok: boolean;
+  authenticated: boolean;
+  user: AuthUser | null;
+  providers: AuthProvidersStatus;
+}
+
+const DEFAULT_PROVIDERS: AuthProvidersStatus = {
+  database: false,
+  authSecret: false,
+  email: false,
+  sms: false,
+  missingDatabaseVars: ['DATABASE_URL', 'AUTH_SECRET'],
+  missingEmailVars: ['RESEND_API_KEY', 'EMAIL_FROM'],
+  missingSmsVars: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID'],
+};
 
 export default function App() {
   const { route, navigate } = useAppRouter();
   const muted = false;
+
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [providers, setProviders] = useState<AuthProvidersStatus>(DEFAULT_PROVIDERS);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const loadAuthState = useCallback(async () => {
+    try {
+      const res = await apiFetch<AuthMeResponse>('/api/auth/me');
+      if (res.ok && res.data) {
+        setProviders(res.data.providers ?? DEFAULT_PROVIDERS);
+        setAuthUser(res.data.authenticated ? res.data.user : null);
+      } else {
+        setAuthUser(null);
+      }
+    } catch {
+      setAuthUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAuthState();
+  }, [loadAuthState]);
 
   useEffect(() => {
     return setupAudioUnlock();
@@ -48,6 +92,11 @@ export default function App() {
     }
   }, []);
 
+  const handleAuthExpired = useCallback(() => {
+    setAuthUser(null);
+    void loadAuthState();
+  }, [loadAuthState]);
+
   const {
     status,
     roomState,
@@ -63,6 +112,9 @@ export default function App() {
     sendMessage,
     manualReconnect,
   } = useAuctionSocket({
+    authenticated: Boolean(authUser),
+    defaultDisplayName: authUser?.displayName || 'Manager',
+    onAuthExpired: handleAuthExpired,
     onRoomJoined: handleRoomJoined,
     onSoundEvent: handleSoundEvent,
   });
@@ -89,7 +141,7 @@ export default function App() {
 
   // Keep /room/:code, /winner, /results aligned with phase changes (e.g. auction ends or host triggers rematch)
   useEffect(() => {
-    if (!roomState) return;
+    if (!roomState || !authUser) return;
     if (roomState.phase === 'COMPLETED' && route.page === 'room') {
       navigate(`/room/${roomState.roomCode}/winner`, { replace: true });
     } else if (
@@ -98,12 +150,48 @@ export default function App() {
     ) {
       navigate(`/room/${roomState.roomCode}`, { replace: true });
     }
-  }, [roomState, route.page, navigate]);
+  }, [authUser, roomState, route.page, navigate]);
 
   const handleLeaveRoom = () => {
     leaveRoom();
     navigate('/');
   };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Clear local session state regardless of transient network errors
+    } finally {
+      leaveRoom();
+      setAuthUser(null);
+      setLoggingOut(false);
+      void loadAuthState();
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#131B2B] text-[#CFEAE0] flex items-center justify-center px-4">
+        <div className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] px-8 py-6 text-center space-y-2 shadow-xl">
+          <div className="font-display text-2xl font-extrabold text-[#CFEAE0]">Real Auction 26</div>
+          <p className="text-xs text-[#CFEAE0]/80">Checking your verified session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <AuthGatePage
+        providers={providers}
+        onAuthenticated={(user) => {
+          setAuthUser(user);
+        }}
+      />
+    );
+  }
 
   const showReconnectBanner =
     Boolean(roomState) &&
@@ -113,6 +201,7 @@ export default function App() {
     if (route.page === 'create') {
       return (
         <CreateAuctionPage
+          defaultHostName={authUser.displayName}
           onCreateRoom={createRoom}
           onNavigate={(p) => navigate(p)}
           isConnecting={status === 'connecting'}
@@ -124,6 +213,7 @@ export default function App() {
       return (
         <JoinRoomPage
           initialRoomCode={route.prefillCode}
+          defaultName={authUser.displayName}
           isConnecting={status === 'connecting'}
           onJoinRoom={joinRoomByCode}
           onNavigate={(p) => navigate(p)}
@@ -157,7 +247,7 @@ export default function App() {
               <div className="flex flex-wrap justify-center gap-3">
                 <button
                   type="button"
-                  onClick={() => joinRoomByCode(route.roomCode, 'Manager')}
+                  onClick={() => joinRoomByCode(route.roomCode, authUser.displayName)}
                   className="rounded-xl bg-[#5B91A3] px-5 py-2.5 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9]"
                 >
                   Enter Room {route.roomCode}
@@ -237,7 +327,7 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-[#131B2B] text-[#CFEAE0]">
       {/* Top Header */}
       <header className="border-b border-[#5B91A3]/30 bg-[#1B273B]">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-4 sm:gap-8 px-4 py-3.5 sm:px-6">
+        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-4 sm:gap-6 px-4 py-3.5 sm:px-6">
           {/* Wordmark */}
           <button
             type="button"
@@ -272,6 +362,23 @@ export default function App() {
               </button>
             ))}
           </nav>
+
+          {/* Signed-in account + Log out */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden sm:block text-right leading-tight">
+              <div className="text-xs font-bold text-[#CFEAE0]">{authUser.displayName}</div>
+              <div className="text-[11px] text-[#CFEAE0]/65 font-mono-num">{authUser.maskedTarget}</div>
+            </div>
+            <button
+              type="button"
+              disabled={loggingOut}
+              onClick={() => void handleLogout()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5B91A3]/50 bg-[#131B2B] px-3 py-1.5 text-xs font-bold text-[#CFEAE0] hover:bg-[#2F4A63] disabled:opacity-50 whitespace-nowrap"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              {loggingOut ? 'Signing out...' : 'Log out'}
+            </button>
+          </div>
         </div>
       </header>
 
