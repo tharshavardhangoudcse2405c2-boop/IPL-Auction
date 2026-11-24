@@ -101,7 +101,9 @@ export function ResultsSummary({
     const lines: string[] = [
       `Real Auction 26 Results (Room ${state.roomCode})`,
       `Sold: ${state.soldHistory.length} | Unsold: ${state.unsoldPool.length}`,
-      state.winnerAnalysis ? `AI Best-Built Squad: ${state.winnerAnalysis.winnerTeamName}` : '',
+      state.winnerAnalysis
+        ? `AI Predicted Winner (not a guaranteed result): ${state.winnerAnalysis.winnerTeamName} — Confidence: ${state.winnerAnalysis.confidenceLevel ?? 'Moderate'} (${state.winnerAnalysis.confidencePercent ?? 70}%)`
+        : '',
       '',
     ].filter((l) => l !== '');
     for (const t of state.teams) {
@@ -202,6 +204,32 @@ export function ResultsSummary({
           </button>
         </div>
       </div>
+
+      {/* AI Predicted Winner Callout (Post-Auction Only) */}
+      {state.winnerAnalysis && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-[#CFEAE0]/45 bg-[#2F4A63] p-5 shadow-xl">
+          <div className="space-y-1">
+            <div className="text-xs font-bold uppercase tracking-wider text-amber-200">
+              AI Predicted Winner (Not a Guaranteed Result) · Confidence:{' '}
+              {state.winnerAnalysis.confidenceLevel ?? 'Moderate'} ({state.winnerAnalysis.confidencePercent ?? 70}%)
+            </div>
+            <div className="font-display text-2xl font-extrabold text-[#CFEAE0]">
+              {state.winnerAnalysis.winnerTeamName}
+            </div>
+            <p className="text-xs sm:text-sm text-[#CFEAE0]/85 leading-relaxed">
+              {state.winnerAnalysis.overallVerdict}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onViewWinner}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#5B91A3] px-4 py-2.5 text-xs font-extrabold text-[#131B2B] hover:bg-[#70A7B9] whitespace-nowrap shrink-0"
+          >
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+            View Full AI Prediction
+          </button>
+        </div>
+      )}
 
       {/* Top Signings Strip */}
       {topSignings.length > 0 && (

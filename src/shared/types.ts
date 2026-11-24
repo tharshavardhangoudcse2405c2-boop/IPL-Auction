@@ -178,6 +178,8 @@ export interface TeamAnalysisEntry {
   verdict: string;
 }
 
+export type ConfidenceLevel = 'High' | 'Moderate' | 'Low';
+
 export interface AuctionWinnerAnalysis {
   roomCode: string;
   generatedAt: number;
@@ -186,6 +188,13 @@ export interface AuctionWinnerAnalysis {
   winnerTeamName: string;
   winnerTeamShortCode: string;
   winnerTeamColor: string;
+  confidenceLevel: ConfidenceLevel;
+  confidencePercent: number;
+  confidenceReason: string;
+  balanceSummary: string;
+  rolesSummary: string;
+  spendingSummary: string;
+  predictionDisclaimer: string;
   isTie: boolean;
   tieBreakerNote: string;
   headline: string;

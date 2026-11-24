@@ -377,7 +377,7 @@ async function startServer(): Promise<void> {
       return;
     }
 
-    if (runtime.state.winnerAnalysis) {
+    if (runtime.state.winnerAnalysis && runtime.state.winnerAnalysis.confidenceLevel) {
       res.json({ ok: true, analysis: runtime.state.winnerAnalysis });
       return;
     }

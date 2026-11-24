@@ -6,6 +6,7 @@ import {
   getTeamTacticalCounts,
   type AuctionRoomState,
   type AuctionWinnerAnalysis,
+  type ConfidenceLevel,
   type Team,
   type TeamAnalysisEntry,
   type TeamAnalysisMetrics,
@@ -13,6 +14,8 @@ import {
 } from '../shared/types.ts';
 
 const MODEL_NAME = 'gemini-4-hydrogen';
+const PREDICTION_DISCLAIMER =
+  'AI prediction based on final squad balance, player roles, and remaining budget — not a guaranteed match or tournament result.';
 
 function round1(val: number): number {
   return Math.round(val * 10) / 10;
@@ -151,6 +154,52 @@ function evaluateTeamRubric(team: Team, state: AuctionRoomState): {
   };
 }
 
+function computeBaselineConfidence(
+  evaluated: { team: Team; overallScore: number; criteria: TeamCriteriaScores; metrics: TeamAnalysisMetrics }[],
+  state: AuctionRoomState,
+  exactTie: boolean,
+): { percent: number; level: ConfidenceLevel; defaultReason: string } {
+  const first = evaluated[0];
+  const second = evaluated[1];
+  if (!first || exactTie) {
+    return {
+      percent: 50,
+      level: 'Low',
+      defaultReason: 'Top contenders are tied on rubric score, squad compliance, and purse efficiency.',
+    };
+  }
+
+  const margin = second ? Math.max(0, first.overallScore - second.overallScore) : 14;
+  const roleReqs = state.config.roleRequirements;
+  const rolesMet =
+    first.metrics.roleCounts.Batter >= roleReqs.Batter &&
+    first.metrics.roleCounts.Bowler >= roleReqs.Bowler &&
+    first.metrics.roleCounts['All-Rounder'] >= roleReqs['All-Rounder'] &&
+    first.metrics.roleCounts.Wicketkeeper >= roleReqs.Wicketkeeper;
+
+  let raw = 56 + Math.min(26, margin * 2.1);
+  if (first.metrics.metMinSquad) raw += 6;
+  else raw -= 10;
+  if (rolesMet) raw += 5;
+  else raw -= 6;
+
+  const percent = Math.round(clamp(raw, 48, 93));
+  const level: ConfidenceLevel = percent >= 78 ? 'High' : percent >= 63 ? 'Moderate' : 'Low';
+  const marginText = second
+    ? `${margin.toFixed(1)}-point lead over ${second.team.name}`
+    : 'clear lead on overall squad construction';
+  const quotaText =
+    first.metrics.metMinSquad && rolesMet
+      ? 'with minimum squad size and all role quotas fulfilled'
+      : 'with minor roster quota gaps remaining';
+
+  return {
+    percent,
+    level,
+    defaultReason: `${level} confidence based on a ${marginText} ${quotaText}.`,
+  };
+}
+
 function compareTeamsDeterministic(
   a: { team: Team; overallScore: number; criteria: TeamCriteriaScores; metrics: TeamAnalysisMetrics },
   b: { team: Team; overallScore: number; criteria: TeamCriteriaScores; metrics: TeamAnalysisMetrics },
@@ -250,13 +299,16 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
       ? `Composite score tie at ${first.overallScore} resolved deterministically via tie-breaker order: (1) minimum squad size compliance, (2) combined bowling coverage + all-rounder balance, (3) remaining purse.`
       : `Clear composite score lead (${first.overallScore}${second ? ` vs runner-up ${second.overallScore}` : ''}).`;
 
+  const baselineConfidence = computeBaselineConfidence(evaluated, state, exactTie);
+
   const prompt = [
-    'You are an impartial cricket auction analyst evaluating the FINAL SQUADS built in the Real Auction 26 simulation.',
-    'This is strictly an evaluation of how well each franchise built its squad during this auction using ONLY the players, roles, tactical roles, ratings, squad counts, and purse figures provided below.',
-    'Do NOT predict real-world IPL season standings, and do NOT invent any external player statistics or attributes not present in the input.',
+    'You are an impartial cricket auction analyst evaluating the FINAL SQUADS and REMAINING BUDGETS at the end of a completed Real Auction 26 session.',
+    'Analyze every team’s final squad, player roles, tactical balance, spending, and remaining purse, then recommend the strongest overall team (#1 ranked) as the AI-predicted winner.',
+    'Keep it grounded strictly in the auction data supplied below. Do NOT invent player stats or guarantee match results.',
     '',
     'Scoring rubric applied equally to all teams (0–100):',
     '- Batting Depth (22%), Bowling Coverage (22%), All-Rounder Balance (18%), Wicketkeeper Availability (14%), Squad Depth (14%), Remaining Purse Efficiency (10%).',
+    `Baseline confidence anchor: ${baselineConfidence.level} (${baselineConfidence.percent}%) — ${baselineConfidence.defaultReason}`,
     `Tie status: ${tieContext}`,
     '',
     `Auction Room ${state.roomCode} Data:`,
@@ -278,7 +330,7 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
       contents: prompt,
       config: {
         systemInstruction:
-          'Return concise, accurate JSON evaluating only the auction squad data supplied. Reference actual signed player names, roles, tactical gaps, and purse figures from the payload.',
+          'Return concise, accurate JSON recommending the #1 team as an AI prediction (never a guarantee). Explicitly explain why they lead based on squad balance, player roles, and spending vs remaining budget using actual signed players and purse numbers from the payload.',
         responseMimeType: 'application/json',
         seed: 42,
         thinkingConfig: {
@@ -289,11 +341,32 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
           properties: {
             headline: {
               type: Type.STRING,
-              description: 'Short headline announcing the best-built auction squad.',
+              description: 'Short headline recommending the predicted winning team.',
             },
             overallVerdict: {
               type: Type.STRING,
-              description: '2-3 sentence summary explaining why the winning squad ranked #1 on auction construction.',
+              description:
+                '2-3 concise sentences explaining the prediction based on squad balance, player roles, and spending/remaining budget.',
+            },
+            confidencePercent: {
+              type: Type.INTEGER,
+              description: 'Calibrated prediction confidence percentage between 45 and 95 (never 100).',
+            },
+            confidenceReason: {
+              type: Type.STRING,
+              description: 'One short sentence explaining the confidence level.',
+            },
+            balanceSummary: {
+              type: Type.STRING,
+              description: 'One concise sentence on the predicted winner’s squad balance and depth.',
+            },
+            rolesSummary: {
+              type: Type.STRING,
+              description: 'One concise sentence on batters, bowlers, all-rounders, and wicketkeeper coverage.',
+            },
+            spendingSummary: {
+              type: Type.STRING,
+              description: 'One concise sentence on purse spent, value buys, and remaining budget.',
             },
             tieBreakerNote: {
               type: Type.STRING,
@@ -319,7 +392,17 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
               },
             },
           },
-          required: ['headline', 'overallVerdict', 'tieBreakerNote', 'teamAnalyses'],
+          required: [
+            'headline',
+            'overallVerdict',
+            'confidencePercent',
+            'confidenceReason',
+            'balanceSummary',
+            'rolesSummary',
+            'spendingSummary',
+            'tieBreakerNote',
+            'teamAnalyses',
+          ],
         },
       },
     });
@@ -337,6 +420,11 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
     const parsed = JSON.parse(rawText) as {
       headline: string;
       overallVerdict: string;
+      confidencePercent: number;
+      confidenceReason: string;
+      balanceSummary: string;
+      rolesSummary: string;
+      spendingSummary: string;
       tieBreakerNote: string;
       teamAnalyses: { teamId: string; strengths: string[]; gaps: string[]; verdict: string }[];
     };
@@ -364,6 +452,25 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
       };
     });
 
+    const aiPct = Number.isFinite(parsed.confidencePercent)
+      ? clamp(Math.round(parsed.confidencePercent), 45, 95)
+      : baselineConfidence.percent;
+    const blendedPct = exactTie
+      ? 50
+      : Math.round(clamp(aiPct * 0.4 + baselineConfidence.percent * 0.6, 48, 94));
+    const confidenceLevel: ConfidenceLevel = exactTie
+      ? 'Low'
+      : blendedPct >= 78
+        ? 'High'
+        : blendedPct >= 63
+          ? 'Moderate'
+          : 'Low';
+
+    const r = first.metrics.roleCounts;
+    const fallbackBalance = `${first.metrics.squadSize} players signed (${first.metrics.overseasCount}/${state.config.maxOverseas} overseas) with avg rating ${first.metrics.avgRating}.`;
+    const fallbackRoles = `${r.Batter} Batters, ${r.Bowler} Bowlers, ${r['All-Rounder']} All-Rounders, and ${r.Wicketkeeper} Wicketkeepers.`;
+    const fallbackSpending = `Spent ${formatLakhsCompact(first.metrics.spentLakhs)} with ${formatLakhsCompact(first.metrics.remainingPurseLakhs)} remaining in budget.`;
+
     const analysis: AuctionWinnerAnalysis = {
       roomCode: state.roomCode,
       generatedAt: Date.now(),
@@ -372,6 +479,13 @@ export async function generateAuctionWinnerAnalysis(state: AuctionRoomState): Pr
       winnerTeamName: first.team.name,
       winnerTeamShortCode: first.team.shortCode,
       winnerTeamColor: first.team.color,
+      confidenceLevel,
+      confidencePercent: blendedPct,
+      confidenceReason: parsed.confidenceReason?.trim() || baselineConfidence.defaultReason,
+      balanceSummary: parsed.balanceSummary?.trim() || fallbackBalance,
+      rolesSummary: parsed.rolesSummary?.trim() || fallbackRoles,
+      spendingSummary: parsed.spendingSummary?.trim() || fallbackSpending,
+      predictionDisclaimer: PREDICTION_DISCLAIMER,
       isTie: exactTie,
       tieBreakerNote: parsed.tieBreakerNote || tieContext,
       headline: parsed.headline,

@@ -121,13 +121,13 @@ export function AuctionWinnerPage({
         <div className="space-y-1.5">
           <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#CFEAE0]">
             <Sparkles className="h-4 w-4 text-[#CFEAE0]" aria-hidden="true" />
-            Post-Auction AI Winner Analysis · Room {state.roomCode}
+            Post-Auction AI Prediction · Room {state.roomCode}
           </div>
           <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-[#CFEAE0]">
-            Auction Winner & Squad Construction Report
+            AI Predicted Winner &amp; Squad Analysis
           </h1>
           <p className="text-xs sm:text-sm text-[#CFEAE0]/80">
-            Evaluates only the completed auction squads, roles, ratings, and purses from this session — no external match predictions.
+            Analyzes each franchise’s completed squad balance, player roles, and remaining budget. Clearly an AI prediction, not a guaranteed result.
           </p>
         </div>
 
@@ -219,55 +219,158 @@ export function AuctionWinnerPage({
 
       {!loading && analysis && (
         <>
-          {/* Winner Spotlight Card */}
-          <section className="rounded-2xl border-2 border-[#CFEAE0]/60 bg-[#2F4A63] p-6 sm:p-8 shadow-2xl space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-              <div className="flex items-center gap-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#131B2B] border border-[#5B91A3]/50 shrink-0">
-                  <Trophy className="h-8 w-8 text-[#CFEAE0]" aria-hidden="true" />
-                </div>
-                <div className="space-y-1">
-                  <div className="text-xs font-bold uppercase tracking-wider text-[#CFEAE0]/85">
-                    {analysis.isTie ? 'Joint Auction Winners (Exact Tie)' : 'Best-Built Auction Squad'}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <TeamCrest
-                      shortCode={analysis.winnerTeamShortCode}
-                      color={analysis.winnerTeamColor}
-                      size="md"
-                    />
-                    <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#CFEAE0]">
-                      {analysis.winnerTeamName}
-                    </h2>
-                  </div>
-                </div>
-              </div>
+          {/* AI Predicted Winner Spotlight Card */}
+          {(() => {
+            const topEntry = analysis.rankings[0];
+            const confidenceLevel = analysis.confidenceLevel ?? 'Moderate';
+            const confidencePercent = analysis.confidencePercent ?? 70;
+            const confidenceColor =
+              confidenceLevel === 'High'
+                ? 'text-emerald-300'
+                : confidenceLevel === 'Moderate'
+                  ? 'text-[#CFEAE0]'
+                  : 'text-amber-300';
+            const barColor =
+              confidenceLevel === 'High'
+                ? 'bg-emerald-400'
+                : confidenceLevel === 'Moderate'
+                  ? 'bg-[#5B91A3]'
+                  : 'bg-amber-300';
 
-              {analysis.rankings[0] && (
-                <div className="rounded-xl border border-[#5B91A3]/45 bg-[#131B2B] px-5 py-3 text-center shrink-0">
-                  <div className="text-[11px] uppercase tracking-wider text-[#CFEAE0]/70">
-                    Composite Score
+            return (
+              <section className="rounded-2xl border-2 border-[#CFEAE0]/60 bg-[#2F4A63] p-6 sm:p-8 shadow-2xl space-y-5">
+                {/* Explicit AI Prediction Notice */}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/40 bg-[#131B2B]/90 px-4 py-2.5 text-xs">
+                  <span className="inline-flex items-center gap-2 font-bold uppercase tracking-wider text-amber-200">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    AI Prediction — Not a Guaranteed Result
+                  </span>
+                  <span className="text-[#CFEAE0]/80">
+                    {analysis.predictionDisclaimer ||
+                      'AI prediction based on final squad balance, player roles, and remaining budget — not a guaranteed match or tournament result.'}
+                  </span>
+                </div>
+
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#131B2B] border border-[#5B91A3]/50 shrink-0">
+                      <Trophy className="h-8 w-8 text-[#CFEAE0]" aria-hidden="true" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs font-bold uppercase tracking-wider text-[#CFEAE0]/85">
+                        {analysis.isTie
+                          ? 'AI Predicted Joint Contenders (Exact Tie)'
+                          : 'AI Predicted Winner (Strongest Overall Squad)'}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <TeamCrest
+                          shortCode={analysis.winnerTeamShortCode}
+                          color={analysis.winnerTeamColor}
+                          size="md"
+                        />
+                        <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#CFEAE0]">
+                          {analysis.winnerTeamName}
+                        </h2>
+                      </div>
+                    </div>
                   </div>
-                  <div className="font-mono-num text-3xl font-extrabold text-[#CFEAE0]">
-                    {analysis.rankings[0].overallScore.toFixed(1)}
-                    <span className="text-sm font-normal text-[#CFEAE0]/65"> / 100</span>
+
+                  <div className="flex flex-wrap items-stretch gap-3 shrink-0">
+                    <div className="rounded-xl border border-[#5B91A3]/45 bg-[#131B2B] px-5 py-3 min-w-[175px] space-y-1.5">
+                      <div className="text-[11px] uppercase tracking-wider text-[#CFEAE0]/70">
+                        Confidence Level
+                      </div>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className={`font-display text-2xl font-extrabold ${confidenceColor}`}>
+                          {confidenceLevel}
+                        </span>
+                        <span className="font-mono-num text-base font-bold text-[#CFEAE0]">
+                          {confidencePercent}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#2F4A63]">
+                        <div
+                          className={`h-full rounded-full ${barColor}`}
+                          style={{ width: `${confidencePercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {topEntry && (
+                      <div className="rounded-xl border border-[#5B91A3]/45 bg-[#131B2B] px-5 py-3 text-center flex flex-col justify-center">
+                        <div className="text-[11px] uppercase tracking-wider text-[#CFEAE0]/70">
+                          Squad Score
+                        </div>
+                        <div className="font-mono-num text-3xl font-extrabold text-[#CFEAE0]">
+                          {topEntry.overallScore.toFixed(1)}
+                          <span className="text-sm font-normal text-[#CFEAE0]/65"> / 100</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
-            </div>
 
-            <div className="rounded-xl border border-[#5B91A3]/35 bg-[#131B2B]/80 p-4 sm:p-5 space-y-2">
-              <div className="font-bold text-base text-[#CFEAE0]">{analysis.headline}</div>
-              <p className="text-sm text-[#CFEAE0]/85 leading-relaxed">{analysis.overallVerdict}</p>
-              <div className="pt-1 text-xs text-[#CFEAE0]/75 border-t border-[#5B91A3]/20">
-                <strong>Ranking Margin / Tie-Breaker:</strong> {analysis.tieBreakerNote}
-              </div>
-            </div>
+                <div className="rounded-xl border border-[#5B91A3]/35 bg-[#131B2B]/80 p-4 sm:p-5 space-y-4">
+                  <div className="space-y-1.5">
+                    <div className="font-bold text-base text-[#CFEAE0]">{analysis.headline}</div>
+                    <p className="text-sm text-[#CFEAE0]/85 leading-relaxed">{analysis.overallVerdict}</p>
+                  </div>
 
-            <div className="text-[11px] text-[#CFEAE0]/75">
-              {analysis.criteriaSummary}
-            </div>
-          </section>
+                  {/* Squad Balance, Player Roles, and Spending Breakdown */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <div className="rounded-lg border border-[#5B91A3]/25 bg-[#2F4A63]/45 p-3 space-y-1">
+                      <div className="font-bold uppercase tracking-wider text-[#CFEAE0]/80">
+                        Squad Balance
+                      </div>
+                      <p className="text-[#CFEAE0]/90 leading-relaxed">
+                        {analysis.balanceSummary ||
+                          (topEntry
+                            ? `${topEntry.metrics.squadSize} players (${topEntry.metrics.overseasCount}/${state.config.maxOverseas} overseas), avg rating ${topEntry.metrics.avgRating}.`
+                            : 'Balanced core across departments.')}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-[#5B91A3]/25 bg-[#2F4A63]/45 p-3 space-y-1">
+                      <div className="font-bold uppercase tracking-wider text-[#CFEAE0]/80">
+                        Player Roles
+                      </div>
+                      <p className="text-[#CFEAE0]/90 leading-relaxed">
+                        {analysis.rolesSummary ||
+                          (topEntry
+                            ? `BAT ${topEntry.metrics.roleCounts.Batter} · BWL ${topEntry.metrics.roleCounts.Bowler} · AR ${topEntry.metrics.roleCounts['All-Rounder']} · WK ${topEntry.metrics.roleCounts.Wicketkeeper}.`
+                            : 'Strong coverage across key cricket roles.')}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-[#5B91A3]/25 bg-[#2F4A63]/45 p-3 space-y-1">
+                      <div className="font-bold uppercase tracking-wider text-[#CFEAE0]/80">
+                        Spending &amp; Budget
+                      </div>
+                      <p className="text-[#CFEAE0]/90 leading-relaxed">
+                        {analysis.spendingSummary ||
+                          (topEntry
+                            ? `Spent ${formatLakhsCompact(topEntry.metrics.spentLakhs)} with ${formatLakhsCompact(topEntry.metrics.remainingPurseLakhs)} remaining.`
+                            : 'Efficient purse utilization.')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 text-xs text-[#CFEAE0]/75 border-t border-[#5B91A3]/20 space-y-1">
+                    {analysis.confidenceReason && (
+                      <div>
+                        <strong>Confidence Basis:</strong> {analysis.confidenceReason}
+                      </div>
+                    )}
+                    <div>
+                      <strong>Ranking Margin / Tie-Breaker:</strong> {analysis.tieBreakerNote}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-[#CFEAE0]/75">
+                  {analysis.criteriaSummary}
+                </div>
+              </section>
+            );
+          })()}
 
           {/* Ranked Leaderboard + Team-by-Team Analysis */}
           <section className="rounded-2xl border border-[#5B91A3]/35 bg-[#2F4A63] p-6 sm:p-8 space-y-5 shadow-xl">
